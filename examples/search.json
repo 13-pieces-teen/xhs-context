@@ -1,0 +1,11 @@
+{
+  "queries": [
+    "AI Infra",
+    "Agent 权限",
+    "LLM 响应",
+    "Sandbox"
+  ],
+  "content": "body",
+  "limit": 8,
+  "max_chars": 6000
+}

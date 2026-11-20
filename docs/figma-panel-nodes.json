@@ -1,0 +1,107 @@
+{
+  "fileKey": "ENwEMHF8nycbRRye1i9jLS",
+  "url": "https://www.figma.com/design/ENwEMHF8nycbRRye1i9jLS",
+  "sessionId": "0eaf3696-36f6-4c3c-a098-f13f2c5a4e1a",
+  "screens": {
+    "ready": {
+      "id": "4:2366",
+      "name": "01 · 准备读取",
+      "width": 400,
+      "height": 600
+    },
+    "running": {
+      "id": "4:2397",
+      "name": "02 · 正在读取",
+      "width": 400,
+      "height": 600
+    },
+    "paused": {
+      "id": "4:2444",
+      "name": "03 · 已暂停",
+      "width": 400,
+      "height": 600
+    },
+    "confirm": {
+      "id": "4:2491",
+      "name": "04 · 等待核对末尾",
+      "width": 400,
+      "height": 600
+    },
+    "blocked": {
+      "id": "4:2542",
+      "name": "05 · 需要补全正文",
+      "width": 400,
+      "height": 600
+    },
+    "browser": {
+      "id": "4:2589",
+      "name": "06 · 浏览器补全中",
+      "width": 400,
+      "height": 600
+    },
+    "complete": {
+      "id": "4:2633",
+      "name": "07 · 正文已保存",
+      "width": 400,
+      "height": 600
+    },
+    "setup": {
+      "id": "4:2680",
+      "name": "08 · 首次安装",
+      "width": 400,
+      "height": 600
+    },
+    "empty": {
+      "id": "4:2709",
+      "name": "09 · 等待收藏页面",
+      "width": 400,
+      "height": 600
+    },
+    "options": {
+      "id": "4:2736",
+      "name": "10 · 修正识别结果",
+      "width": 400,
+      "height": 600
+    },
+    "unknown": {
+      "id": "4:2773",
+      "name": "11 · 确认读取范围",
+      "width": 400,
+      "height": 600
+    },
+    "partial": {
+      "id": "4:2806",
+      "name": "12 · 已保存，列表待确认",
+      "width": 400,
+      "height": 600
+    },
+    "errors": {
+      "id": "4:2850",
+      "name": "13 · 读取详情",
+      "width": 400,
+      "height": 600
+    }
+  },
+  "components": "4:2336",
+  "reactions": 26,
+  "styles": {
+    "caption": "S:1284c81dd98430a42834a7ec9cd96ee4179910b5,",
+    "body": "S:301aa84f168d9cb3031367f092ba7c9199173523,",
+    "label": "S:c612397061d2ebb0eab732508a7fd90350ec7b38,",
+    "title": "S:272e60ed8d9903ec5df521f9eb48b33a9bc83ca8,",
+    "heading": "S:003069fdb5fa8c7a7bb526a516c63abbeaa95771,"
+  },
+  "tokens": {
+    "canvas": "VariableID:4:1997",
+    "surface": "VariableID:4:1998",
+    "ink": "VariableID:4:1999",
+    "muted": "VariableID:4:2000",
+    "brand": "VariableID:4:2001",
+    "tint": "VariableID:4:2002",
+    "line": "VariableID:4:2003",
+    "amber": "VariableID:4:2004",
+    "amberBg": "VariableID:4:2005"
+  },
+  "visualValidation": "BLOCKED_BY_STARTER_MCP_QUOTA",
+  "status": "initial_prototype"
+}

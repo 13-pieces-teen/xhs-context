@@ -1,0 +1,56 @@
+<!doctype html><html lang="zh"><meta charset="utf-8">
+<title>合成用户 - 小红书</title>
+<style>
+body{font:16px system-ui;margin:25px;background:#f6f7f3}.feeds-tab-container{overflow:hidden;width:1000px}
+.transform-container{display:flex;width:3000px;transform:translateX(-1000px)}.tab-content-item{width:1000px;flex:none;padding-top:1px;box-sizing:border-box}
+.reds-tabs-list{display:flex;gap:20px;padding:15px 0}.active{color:#b51f3c}.scroller{height:560px;overflow:auto;border:1px solid #bbb;background:white}
+.canvas{position:relative;height:2800px}.note-item{position:absolute;width:30%;height:125px;padding:15px;background:#e8eee5;border-radius:8px;box-sizing:border-box}
+.title{display:block;margin-top:10px}a{color:#26593d}.end-container{position:absolute;top:2760px;left:50%}
+</style>
+<div id="userPageContainer">
+<h1>合成用户</h1><p>969 获赞与收藏（不是收藏列表总数）</p>
+<div class="xhs-user-page-primary-tabs reds-tabs-list">
+  <div class="reds-tab-item sub-tab-list" data-fixture="posts">笔记</div>
+  <div class="reds-tab-item active sub-tab-list" data-fixture="saved">收藏</div>
+  <div class="reds-tab-item sub-tab-list">点赞</div>
+</div>
+<div class="feeds-tab-container"><div class="transform-container">
+  <div class="tab-content-item" style="height:0px;overflow:hidden">
+    <div class="feeds-container" id="userPostedFeeds">
+      <section class="note-item"><a class="cover" href="https://www.xiaohongshu.com/user/profile/111111111111111111111111/ffffffffffffffffffffffff?xsec_token=fixture-post"><span class="title">不得采集的已发布笔记</span></a></section>
+      <div class="end-container">THE END</div>
+    </div>
+  </div>
+  <div class="tab-content-item" style="height:auto;overflow:visible">
+    <div class="sub-tab-list"><div class="reds-tabs-list">
+      <div class="reds-tab-item active" data-fixture="notes"><span class="profile-note-count">笔记・60</span></div>
+      <div class="reds-tab-item" data-fixture="albums">专辑・20</div>
+      <div class="reds-tab-item">文件・6</div>
+    </div></div>
+    <div class="feeds-container scroller"><div class="canvas"></div></div>
+  </div>
+  <div class="tab-content-item" style="height:0px;overflow:hidden"><div class="feeds-container">
+    <section class="note-item"><a class="cover" href="https://www.xiaohongshu.com/explore/eeeeeeeeeeeeeeeeeeeeeeee"><span class="title">不得采集的点赞笔记</span></a></section>
+  </div></div>
+</div></div>
+</div>
+<script>
+const scroller=document.querySelector(".scroller"),canvas=document.querySelector(".canvas");
+function render(){
+  canvas.replaceChildren();
+  const start=Math.floor(scroller.scrollTop/140)*3,end=Math.min(60,start+18);
+  for(let i=start;i<end;i++){
+    const node=document.createElement("section");node.className="note-item";
+    node.style.top=Math.floor(i/3)*140+"px";node.style.left=(i%3)*33+"%";
+    const id=(i+1000).toString(16).padStart(24,"0");
+    const canonical=document.createElement("a");canonical.style.display="none";
+    canonical.href="https://www.xiaohongshu.com/explore/"+id;
+    const link=document.createElement("a");link.className="cover mask ld";
+    link.href="https://www.xiaohongshu.com/user/profile/111111111111111111111111/"+id+"?xsec_token=fixture-only&xsec_source=pc_user";
+    const title=document.createElement("span");title.className="title";title.textContent="合成收藏 "+(i+1)+"：容器学习";
+    link.append(title);node.append(canonical,link);canvas.append(node);
+  }
+  if(end===60){const footer=document.createElement("div");footer.className="end-container";footer.textContent="THE END";canvas.append(footer);}
+}
+scroller.addEventListener("scroll",render);render();
+</script></html>

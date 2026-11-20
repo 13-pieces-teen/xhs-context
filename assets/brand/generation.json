@@ -1,0 +1,9 @@
+{
+  "date": "2026-11-20",
+  "selected": "C / 文脉 / Context Weave",
+  "tool": "built-in image_gen",
+  "source": "output/logo-candidates-2026-11-20/c-context-weave.png",
+  "prompt": "Edit the attached approved xhs-context logo. This is production cleanup of the SELECTED C / Context Weave design, NOT a new design. Preserve the exact silhouette, composition, proportions, ribbon crossing, corner roundness, upper and lower triangular negative spaces, and over-under order of the original two interlocked paper ribbons. Keep the existing visual identity completely recognizable. Remove all stray pixels, reddish specks inside the holes or around the edges, uneven grain, and fringing. Clean and deliberate antialiased edges. Make the front ribbon uniform flat terracotta #AD4C38 and the ribbon behind it uniform darker terracotta #913C2B; retain their simple overlap, without gradients, illumination, texture, new bevels or shadows. Keep the symbol centered in a square canvas with approximately 10% clear space around the longest extent. The background and both holes must be truly transparent. One logo only, no letters, no labels, no wordmark, no mockup, no layout. Do not add, remove, rotate, or reshape the main ribbons. Strong technical geometric open-source software emblem.",
+  "transparent_background": true,
+  "master": "xhs-context-mark.png"
+}

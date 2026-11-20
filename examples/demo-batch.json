@@ -1,0 +1,40 @@
+{
+  "dataset_kind": "synthetic",
+  "collection": {
+    "id": "demo-favorites",
+    "name": "合成演示收藏（非真实数据）",
+    "source_url": "https://www.xiaohongshu.com/user/profile/demo",
+    "identity_kind": "fixture"
+  },
+  "notes": [
+    {
+      "note_id": "000000000000000000000001",
+      "source_url": "https://www.xiaohongshu.com/explore/000000000000000000000001",
+      "title": "马德里小吃：合成演示",
+      "body": "这是一份合成测试资料，不是真实收藏，也不能用来定位店铺。\n示例店名 Café Aurora，推荐食物是土豆饼。此处的街区和推荐均为虚构。\n营业时间未知，不能根据这份演示资料添加实际地图地点。"
+    },
+    {
+      "note_id": "000000000000000000000002",
+      "source_url": "https://www.xiaohongshu.com/explore/000000000000000000000002",
+      "title": "基础设施入门：从容器部署开始（演示）",
+      "body": "合成测试资料。\n面向会写 Python、第一次学习基础设施的同学。先理解进程、端口与 HTTP，再学习 Docker 镜像和容器。\n练习：把一个简单 HTTP 服务装入容器，设置健康检查，查看日志。暂时不需要先学 Kubernetes。\n阅读顺序：进程与网络基础 → 容器部署 → 日志和可观测性。"
+    },
+    {
+      "note_id": "000000000000000000000003",
+      "source_url": "https://www.xiaohongshu.com/explore/000000000000000000000003",
+      "title": "infra：Kubernetes 调度深入（演示）",
+      "body": "合成测试资料。\n本文讨论 k8s 调度器扩展点和节点亲和性，需要 Linux 网络、容器和 Kubernetes 的基础。\n不适合零基础同学作为第一篇阅读。读过基础设施入门并完成容器部署练习后再看。"
+    },
+    {
+      "note_id": "000000000000000000000004",
+      "source_url": "https://www.xiaohongshu.com/explore/000000000000000000000004",
+      "title": "图片证据演示",
+      "body": "合成测试资料。测试短语只出现在配图中，用来检查 OCR、图片定位与原图回读。",
+      "images": [
+        {
+          "path": "ocr-card.png"
+        }
+      ]
+    }
+  ]
+}

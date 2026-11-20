@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>收藏上下文</title>
+  <link rel="icon" type="image/png" href="icons/icon-32.png">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="app-header">
+    <img class="mark" src="icons/icon-128.png" width="36" height="36" alt="" aria-hidden="true">
+    <div class="identity"><h1>收藏上下文</h1><p>让收藏随时可用</p></div>
+    <span id="connection" class="badge" role="status">连接中</span>
+  </header>
+  <main>
+    <section id="setup" class="notice warning" hidden aria-labelledby="setup-title">
+      <p class="eyebrow">首次使用</p><h2 id="setup-title">连接你的本机资料库</h2>
+      <p>双击项目中的“安装.cmd”，等待安装完成。以后打开扩展会自动连接。</p>
+      <button id="reconnect">安装好了，重试</button>
+    </section>
+    <section id="activity" hidden aria-labelledby="status-title">
+      <div class="task-heading">
+        <div class="row"><p id="task-name" class="eyebrow"></p><button id="refresh" class="link small">刷新</button></div>
+        <h2 id="status-title">正在获取读取进度</h2>
+      </div>
+      <p id="progress" class="sr-only" role="status" aria-live="polite"></p>
+      <div class="progress-card">
+        <div class="metric">
+          <div class="row"><span class="metric-label"><span class="step">01</span>收藏列表</span><strong id="list-value">—</strong></div>
+          <div id="list-meter" class="meter" role="progressbar" aria-label="收藏列表收集进度"><span id="list-fill"></span></div>
+          <p id="list-state" class="metric-caption">正在获取状态</p>
+        </div>
+        <div class="metric">
+          <div class="row"><span class="metric-label"><span class="step">02</span>正文保存</span><strong id="body-value">—</strong></div>
+          <div id="body-meter" class="meter" role="progressbar" aria-label="已发现笔记的正文保存进度"><span id="body-fill"></span></div>
+          <p id="body-state" class="metric-caption">以已发现笔记为基准</p>
+        </div>
+      </div>
+      <p id="action-note" class="context-note"></p>
+      <div id="end-check" class="notice warning" hidden>
+        <strong>列表还没有确认收齐</strong>
+        <p>页面暂时没有更多内容。回到收藏页核对后，可以确认末尾，也可以先保存已读内容。</p>
+        <button id="finish">确认已到末尾</button>
+        <button id="partial" class="link">先保存已读内容</button>
+      </div>
+      <div id="browser-help" class="notice" hidden>
+        <strong id="recovery-title">补全未完成正文</strong>
+        <p>扩展会逐篇打开后台笔记页，读取后关闭；不导出 Cookie。遇到登录或验证提示会暂停。</p>
+        <button id="browser-start">用浏览器补全正文</button>
+      </div>
+      <div class="buttons">
+        <button id="pause" class="secondary" hidden>暂停读取</button>
+        <button id="resume" hidden>继续读取</button>
+      </div>
+      <div class="source-row"><button id="open-source" class="link">打开收藏页 <span aria-hidden="true">↗</span></button></div>
+      <details id="task-details">
+        <summary id="detail-summary">读取详情</summary>
+        <p id="detail" class="hint"></p><p id="failure-reason" hidden></p>
+      </details>
+    </section>
+    <section id="target-card" aria-labelledby="folder">
+      <div class="target-meta">
+        <p class="eyebrow">当前收藏夹</p><h2 id="folder">正在识别…</h2>
+        <p id="scope" class="hint">打开小红书的收藏列表即可读取。</p>
+      </div>
+      <div id="ready-guide" class="ready-guide">
+        <strong>把收藏变成可用的资料</strong>
+        <p>自动读取列表，保存笔记正文和原文链接，随后可交给 Agent 搜索和引用。</p>
+      </div>
+      <label id="confirmation" class="check" hidden><input id="confirmed" type="checkbox">这是我要读取的收藏列表</label>
+      <button id="start" disabled>读取当前收藏夹</button>
+      <button id="inspect" class="secondary" hidden>刷新页面识别</button>
+      <p class="hint footnote">关闭面板也会继续读取。<br>列表读取时，请保留原收藏标签页。</p>
+    </section>
+    <details id="advanced">
+      <summary>修正名称与总数</summary>
+      <label for="name">本地名称 <span class="hint">默认跟随页面</span></label>
+      <input id="name" maxlength="200" placeholder="自动识别" autocomplete="off">
+      <label for="expected">已核对总数 <span class="hint">可留空</span></label>
+      <input id="expected" type="number" min="0" max="100000" step="1" placeholder="未知则不设置总数">
+      <p class="hint">仅在识别有误时修正。列表收齐和正文保存会分别报告。</p>
+      <p class="font-credit">界面使用 MiSans 字体 · <a href="fonts/MiSans-license.pdf" target="_blank" rel="noopener">许可说明</a></p>
+    </details>
+    <p id="message" role="alert" hidden></p>
+  </main>
+  <footer>仅保存正文 <span aria-hidden="true">·</span> 图片 / OCR / 视频暂不处理</footer>
+  <script src="popup.js"></script>
+</body>
+</html>
+

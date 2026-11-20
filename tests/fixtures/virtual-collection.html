@@ -1,0 +1,25 @@
+<!doctype html><html lang="zh"><meta charset="utf-8">
+<title>合成收藏夹 · 虚拟列表测试</title>
+<style>body{font:16px system-ui;margin:25px;background:#f6f7f3}.scroller{height:560px;overflow:auto;border:1px solid #bbb;background:white}.canvas{position:relative;height:2800px}.note-item{position:absolute;width:30%;height:125px;padding:15px;background:#e8eee5;border-radius:8px;box-sizing:border-box}.title{display:block;margin-top:10px}a{color:#26593d}.end-container{position:absolute;top:2760px;left:50%}</style>
+<div role="tab" aria-selected="true">收藏（60）</div>
+<h1 class="collection-title" data-collection-name="本地合成收藏夹">本地合成收藏夹 <span data-note-count="60">60 篇</span></h1>
+<p>60 条资料，DOM 只保留滚动位置附近的卡片。未访问真实小红书。</p>
+<div class="scroller"><div class="canvas"></div></div>
+<script>
+const scroller=document.querySelector(".scroller"),canvas=document.querySelector(".canvas");
+function render(){
+  canvas.replaceChildren();
+  const start=Math.floor(scroller.scrollTop/140)*3,end=Math.min(60,start+18);
+  for(let i=start;i<end;i++){
+    const node=document.createElement("section");node.className="note-item";
+    node.style.top=Math.floor(i/3)*140+"px";node.style.left=(i%3)*33+"%";
+    const link=document.createElement("a");
+    link.href="https://www.xiaohongshu.com/explore/"+(i+1000).toString(16).padStart(24,"0")+"?xsec_token=fixture-only";
+    const title=document.createElement("span");title.className="title";title.textContent="合成收藏 "+(i+1)+"：容器学习";
+    link.append(title);node.append(link);canvas.append(node);
+  }
+  if(end===60){const footer=document.createElement("div");footer.className="end-container";footer.textContent="THE END";canvas.append(footer);}
+}
+scroller.addEventListener("scroll",render);render();
+</script></html>
+
