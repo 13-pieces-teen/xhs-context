@@ -9,6 +9,7 @@ from .common import XhsError, dumps, fields, integer, now, safe_id, text_field
 from .network import validate_note_url, validate_url
 from .processing import finish_body, body_error, preserve_separate_images
 from .access import access_restriction, require_access, restrict_access
+from .browser_retry import RETRYABLE, DELAYS, clock_ms, pending_retry
 
 
 def enable_browser(store, job_id):
@@ -37,10 +38,27 @@ def next_page(store):
         restriction = access_restriction(db)
         if restriction:
             return {"task": None, "access_restriction": restriction}
-        db.execute("UPDATE job_items SET state=CASE WHEN attempts<3 THEN 'queued' ELSE 'failed' END,"
-                   "error='BROWSER_TIMEOUT' WHERE state='browser_running' AND updated_at<?", (cutoff,))
+        expired = db.execute("SELECT i.*,j.state AS job_state FROM job_items i JOIN jobs j ON j.id=i.job_id "
+                             "WHERE i.state='browser_running' AND i.updated_at<?", (cutoff,)).fetchall()
+        for item in expired:
+            paused = item['job_state'] != 'active'
+            attempts = max(0, item['attempts'] - int(paused))
+            exhausted = not paused and attempts >= 3
+            # The lease has already waited 90 seconds. Retry this item first;
+            # worker replacement must not bypass the same three-attempt limit.
+            payload = json.loads(item['payload'])
+            payload['browser_retry_at'] = 0
+            db.execute("UPDATE job_items SET state=?,attempts=?,error=?,payload=?,updated_at=? WHERE job_id=? AND note_id=?",
+                       ('failed' if exhausted else 'queued', attempts, None if paused else 'BROWSER_TIMEOUT',
+                        dumps(payload), now(), item['job_id'], item['note_id']))
+            if exhausted:
+                db.execute("UPDATE jobs SET state='paused',error='BROWSER_TIMEOUT',updated_at=? WHERE id=?",
+                           (now(), item['job_id']))
         if db.execute("SELECT 1 FROM job_items WHERE state='browser_running'").fetchone():
             return {"task": None}
+        retry = pending_retry(db)
+        if retry and retry['retry_at'] > clock_ms():
+            return {'task': None, 'browser_retry': retry}
         # Drain snapshots left by an interrupted older host before more pages.
         if db.execute("SELECT count(*) FROM job_items i JOIN jobs j ON j.id=i.job_id "
                       "WHERE j.state='active' AND i.state IN ('queued','running') "
@@ -49,13 +67,14 @@ def next_page(store):
         row = db.execute("SELECT i.* FROM job_items i JOIN jobs j ON j.id=i.job_id "
                          "WHERE j.state='active' AND j.content_mode='browser' AND i.state='queued' "
                          "AND i.attempts<3 AND json_extract(i.payload,'$.browser_snapshot') IS NULL "
-                         "ORDER BY i.updated_at,i.note_id LIMIT 1").fetchone()
+                         "ORDER BY (json_extract(i.payload,'$.browser_retry_at') IS NULL),i.updated_at,i.note_id LIMIT 1").fetchone()
         if not row:
             return {"task": None}
         payload = json.loads(row["payload"])
+        payload.pop('browser_retry_at', None)
         lease = uuid.uuid4().hex
         payload["browser_lease"] = lease
-        db.execute("UPDATE job_items SET state='browser_running',attempts=attempts+1,payload=?,updated_at=? "
+        db.execute("UPDATE job_items SET state='browser_running',attempts=attempts+1,error=NULL,payload=?,updated_at=? "
                    "WHERE job_id=? AND note_id=?", (dumps(payload), now(), row["job_id"], row["note_id"]))
         return {"task": {"job_id": row["job_id"], "note_id": row["note_id"],
                          "source_url": payload["source_url"], "lease_id": lease}}
@@ -139,11 +158,16 @@ def accept_page(store, job_id, request):
                        (dumps(payload), "ready" if ready else "partial", body_error(note), now(), job_id, note_id))
         else:
             code = request["error"]
-            if code not in {"ACCESS_BLOCKED", "SOURCE_UNAVAILABLE", "SOURCE_LINK_EXPIRED", "BROWSER_TIMEOUT", "BROWSER_PARSE_FAILED", "BROWSER_CLOSED", "BROWSER_PAUSED"}:
+            if code not in RETRYABLE | {"ACCESS_BLOCKED", "SOURCE_UNAVAILABLE", "SOURCE_LINK_EXPIRED", "BROWSER_PARSE_FAILED", "BROWSER_PAUSED", "BROWSER_ERROR"}:
                 raise XhsError("INVALID_ARGUMENT", "Unknown browser error")
+            if code in RETRYABLE and row['attempts'] < 3:
+                payload['browser_retry_at'] = clock_ms() + DELAYS[max(0, row['attempts'] - 1)] * 1000
+                db.execute("UPDATE job_items SET state='queued',payload=?,error=?,updated_at=? WHERE job_id=? AND note_id=?",
+                           (dumps(payload), code, now(), job_id, note_id))
+                return {'accepted': True, 'browser_retry': pending_retry(db, job_id)}
             db.execute("UPDATE job_items SET state=?,error=?,attempts=attempts-?,updated_at=? WHERE job_id=? AND note_id=?",
                        ("queued" if code == "BROWSER_PAUSED" else "failed", None if code == "BROWSER_PAUSED" else code,
                         int(code == "BROWSER_PAUSED"), now(), job_id, note_id))
-            if code in {"ACCESS_BLOCKED", "BROWSER_CLOSED", "BROWSER_TIMEOUT"}:
+            if code in RETRYABLE | {"ACCESS_BLOCKED", "BROWSER_ERROR"}:
                 db.execute("UPDATE jobs SET state='paused',error=?,updated_at=? WHERE id=?", (code, now(), job_id))
     return {"accepted": True, "duplicate": False}

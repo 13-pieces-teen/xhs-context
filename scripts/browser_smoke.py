@@ -114,6 +114,9 @@ def main():
     work.mkdir(parents=True)
     extension = work / "extension"
     shutil.copytree(ROOT / "browser-extension", extension)
+    # Test-only handle: service workers prohibit dynamic import during evaluation.
+    background = extension / 'background.js'
+    background.write_text(background.read_text(encoding='utf-8') + '\nglobalThis.fixtureNativeClient = NativeClient;\n', encoding='utf-8')
     host_name = "org.xhs_context.test_" + run_id
     native_file = extension / "native.mjs"
     native_file.write_text(native_file.read_text(encoding="utf-8").replace("org.xhs_context.host", host_name), encoding="utf-8")
@@ -314,12 +317,25 @@ def main():
                 # tabs.create's first navigation can precede Playwright's target
                 # attachment. Allocate a real inactive tab, then navigate through
                 # the attached Page so all test traffic stays inside our routes.
-                sw.evaluate("""() => {
+                sw.evaluate("""async () => {
                     globalThis.fixtureNavigations = [];
+                    globalThis.fixtureBusyFailures = 1;
+                    globalThis.fixtureLostReceipts = 1;
+                    globalThis.fixtureCreates = 0;
                     const create = chrome.tabs.create.bind(chrome.tabs);
                     chrome.tabs.create = async options => {
+                        fixtureCreates++;
+                        if (fixtureBusyFailures-- > 0) throw new Error('Tabs cannot be edited right now (user may be dragging a tab).');
                         fixtureNavigations.push(options.url);
                         return create({...options, url:'about:blank'});
+                    };
+                    const NativeClient = globalThis.fixtureNativeClient;
+                    const request = NativeClient.prototype.request;
+                    NativeClient.prototype.request = async function(path, body) {
+                        const response = await request.call(this, path, body);
+                        if (path.endsWith('/browser-result') && body?.snapshot && fixtureLostReceipts-- > 0)
+                            throw Object.assign(new Error('HOST_DISCONNECTED'), {transient: true});
+                        return response;
                     };
                 }""")
                 def navigate_fixture(page):
@@ -329,7 +345,12 @@ def main():
                 context.on("page", navigate_fixture)
                 popup.locator("#browser-start").evaluate("(e)=>e.click()")
                 expect(popup.locator("#browser-help")).to_be_hidden()
-                expect(popup.locator("#status-title")).to_have_text("正文已读完，可供 Agent 使用", timeout=30000)
+                expect(popup.locator("#status-title")).to_have_text("暂时中断，将自动继续", timeout=10000)
+                expect(popup.locator("#action-note")).to_contain_text("自动重试")
+                expect(popup.locator("#pause")).to_be_visible()
+                expect(popup.locator("#status-title")).to_have_text("正文已读完，可供 Agent 使用", timeout=60000)
+                assert sw.evaluate('fixtureCreates') == 4  # One failed create, three actual pages; lost ACK opens none.
+                report['temporary_tab_busy_and_lost_ack_auto_recovery'] = 'PASS'
                 expect(popup.locator("#progress")).to_contain_text("正文已保存 3 篇")
                 expect(popup.locator("#failure-reason")).to_be_hidden()
                 assert "完整归档" not in popup.locator("#progress").inner_text()

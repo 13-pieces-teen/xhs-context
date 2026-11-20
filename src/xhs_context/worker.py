@@ -46,8 +46,8 @@ class Worker:
         with self.store.write() as db:
             db.execute("UPDATE job_items SET state=CASE WHEN attempts<3 THEN 'queued' ELSE 'failed' END,"
                        "error='INTERRUPTED',updated_at=? WHERE state='running'", (now(),))
-            db.execute("UPDATE job_items SET state=CASE WHEN attempts<3 THEN 'queued' ELSE 'failed' END,error='INTERRUPTED',updated_at=? "
-                       "WHERE state='browser_running'", (now(),))
+            # The extension may still own a page or an unacknowledged result after
+            # a host restart. Keep its lease; next_page expires abandoned leases.
         if not self.media:
             self.adopt_body_scope()
 

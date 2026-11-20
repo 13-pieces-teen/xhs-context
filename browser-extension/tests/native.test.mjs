@@ -48,3 +48,14 @@ test("native operation errors cannot acknowledge a durable batch", async () => {
   port.receive({id: port.sent[0].id, ok: false, error: {code: "CONFLICT"}});
   await assert.rejects(pending, /CONFLICT/);
 });
+
+test('timeout closes a stuck native port and a late old disconnect cannot break its replacement', async () => {
+  const chrome = runtime(), client = new NativeClient(chrome, 5);
+  const first = client.request('/v1/status');
+  await assert.rejects(first, error => error.message === 'NATIVE_TIMEOUT' && error.transient);
+  const retry = client.request('/v1/status');
+  chrome.ports[0].disconnect();
+  const port = chrome.ports[1];
+  port.receive({id: port.sent[0].id, ok: true, data: {connected: true}});
+  assert.equal((await retry).connected, true);
+});

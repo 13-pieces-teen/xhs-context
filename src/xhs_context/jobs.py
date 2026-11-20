@@ -130,14 +130,25 @@ def finish_scan(store, job_id, request):
 
 
 def set_job_state(store, job_id, state, retry_failed=False):
+    from .browser_retry import RETRYABLE
     with store.write() as db:
         if state == "active":
             require_access(db)
-        if not db.execute("SELECT id FROM jobs WHERE id=?", (job_id,)).fetchone():
+        previous = db.execute("SELECT state FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not previous:
             raise XhsError("JOB_NOT_FOUND", "Unknown job")
         db.execute("UPDATE jobs SET state=?,error=CASE WHEN ?='active' THEN NULL ELSE error END,updated_at=? WHERE id=?",
                    (state, state, now(), job_id))
         if retry_failed:
+            # Explicit continuation releases an abandoned page from a paused task.
+            if previous['state'] == 'paused':
+                db.execute("UPDATE job_items SET state='queued',attempts=MAX(0,attempts-1),error=NULL,"
+                           "payload=json_set(json_remove(payload,'$.browser_lease'),'$.browser_retry_at',0) WHERE job_id=? AND state='browser_running'", (job_id,))
+            for code in RETRYABLE:
+                db.execute("UPDATE job_items SET state='queued',attempts=0,error=NULL,"
+                           "payload=json_set(json_remove(payload,'$.browser_lease'),'$.browser_retry_at',0) WHERE job_id=? AND state='failed' AND error=?", (job_id, code))
+            db.execute("UPDATE job_items SET payload=json_set(payload,'$.browser_retry_at',0) WHERE job_id=? "
+                       "AND state='queued' AND json_type(payload,'$.browser_retry_at') IS NOT NULL", (job_id,))
             # A missing body needs a fresh normal page read, not the same incomplete snapshot.
             db.execute("UPDATE job_items SET payload=json_remove(payload,'$.browser_snapshot','$.browser_lease') "
                        "WHERE job_id=? AND state='partial' AND error LIKE 'BODY_%'", (job_id,))
@@ -147,10 +158,12 @@ def set_job_state(store, job_id, state, retry_failed=False):
 
 
 def job_report(db, job_id):
+    from .browser_retry import pending_retry
     row = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     if not row:
         raise XhsError("JOB_NOT_FOUND", "Unknown job")
     result = dict(row)
+    result['browser_retry'] = pending_retry(db, job_id)
     result["access_restriction"] = access_restriction(db)
     counts = {r[0]: r[1] for r in db.execute(
         "SELECT state,count(*) FROM job_items WHERE job_id=? GROUP BY state", (job_id,))}

@@ -146,7 +146,7 @@ async function handle(message, sender) {
     void flush();
     void browserReader.pump();
     return {page, note: await currentNote(), page_error: pageError, page_session: pageSession, session, queued: state.queue.length,
-      last_error: state.last_error, browser_error: state.browser_error, restriction_pending: state.restriction_pending,
+      last_error: state.last_error, browser_error: state.browser_error, browser_wait: state.browser_wait, restriction_pending: state.restriction_pending,
       connection_error: connectionError, server_status: serverStatus};
   }
   if (message.type === 'images-current') {
@@ -195,6 +195,7 @@ async function handle(message, sender) {
     if (existing) {
       await flush();
       await native.request("/v1/jobs/" + existing.job_id + "/resume", {});
+      await journal.mutate(s => { s.sessions[existing.job_id].user_paused = false; s.browser_error = null; s.browser_wait = null; });
       await scan(existing, page);
       void flush();
       return {job_id: existing.job_id, resumed: true};
@@ -228,7 +229,9 @@ async function handle(message, sender) {
       await requireAcquisition(message.job_id);
       await flush();
       await native.request("/v1/jobs/" + message.job_id + "/resume", {});
+      await journal.mutate(s => { s.sessions[message.job_id].user_paused = false; s.browser_error = null; s.browser_wait = null; });
     };
+    if (message.type === 'pause') await journal.mutate(s => { s.sessions[message.job_id].user_paused = true; });
     if (!session.finalized) {
       if (message.type === "pause") {
         try { await chrome.tabs.sendMessage(session.tab_id, {type: "pause"}); } catch {}
@@ -251,7 +254,10 @@ async function handle(message, sender) {
     if (!session) throw new Error("找不到这次读取记录。");
     await flush();
     await native.request("/v1/jobs/" + session.job_id + "/browser", {});
-    await journal.mutate(s => { s.sessions[session.job_id].browser_enabled = true; s.active_job_id = session.job_id; });
+    await journal.mutate(s => {
+      s.sessions[session.job_id].browser_enabled = true; s.sessions[session.job_id].user_paused = false;
+      s.browser_error = null; s.browser_wait = null; s.active_job_id = session.job_id;
+    });
     void browserReader.pump();
     return {};
   }

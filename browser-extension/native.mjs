@@ -26,8 +26,9 @@ export class NativeClient {
     });
     port.onDisconnect.addListener(() => {
       const reason = this.runtime.lastError?.message || "本机组件已断开，点击重试即可重新连接。";
-      if (this.port === port) this.port = null;
-      this.fail(new Error(/not found|not registered|forbidden|Access.*denied/i.test(reason) ? "HOST_NOT_INSTALLED" : reason));
+      if (this.port !== port) return;
+      const missing = /not found|not registered|forbidden|Access.*denied/i.test(reason);
+      this.fail(Object.assign(new Error(missing ? 'HOST_NOT_INSTALLED' : 'HOST_DISCONNECTED'), {transient: !missing}));
     });
     return port;
   }
@@ -45,8 +46,9 @@ export class NativeClient {
       try {
         const port = this.connect();
         const timer = setTimeout(() => {
-          this.pending.delete(id);
-          reject(new Error("本机组件响应超时，已发送的数据会保留，稍后重试。"));
+          if (this.port !== port) return;
+          this.fail(Object.assign(new Error('NATIVE_TIMEOUT'), {transient: true}));
+          port.disconnect();
         }, this.timeout);
         this.pending.set(id, {resolve, reject, timer});
         port.postMessage({id, path, ...(body === undefined ? {} : {body})});

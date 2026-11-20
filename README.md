@@ -11,14 +11,14 @@
 
 **Skill 指导 Agent 拆解问题，CLI 检索和返回证据，Agent 回读后决定是否继续查。** 本项目采用本地资料库 + CLI + Codex Skill；不需要 MCP 服务。
 
-当前版本 **0.5.0 prototype**（Python 0.5.0a1），面向 Windows / Chrome / Edge。项目维护于 [GitHub](https://github.com/13-pieces-teen/xhs-context)。
+当前版本 **0.5.1 prototype**（Python 0.5.1a1），面向 Windows / Chrome / Edge。项目维护于 [GitHub](https://github.com/13-pieces-teen/xhs-context)。
 
-> 真实收藏批量读取曾遇到小红书安全限制 300013，目前本机资料库保持采集停止保护。已保存资料可以离线查询；本次升级没有恢复真实采集。普通网页、登录状态或匿名读取均不保证不会触发平台限制。
+> 真实收藏批量读取曾遇到小红书安全限制 300013。用户确认正常访问恢复后已清除本机旧停止标记；新检测到的平台限制仍会停止采集。已保存资料可离线查询，普通网页、登录状态或匿名读取均不保证不会触发平台限制。
 
 ## 安装与升级
 
 1. 准备 Python 3.11–3.13 和 uv，双击 **安装.cmd**。安装本机组件、CLI 与个人 Codex Skill，无需管理员权限或 OCR 模型。
-2. 在 Chrome / Edge 扩展管理页启用开发者模式，加载项目的 **browser-extension** 文件夹。已有扩展点击“重新加载”，确认版本 0.5.0。
+2. 在 Chrome / Edge 扩展管理页启用开发者模式，加载项目的 **browser-extension** 文件夹。已有扩展点击“重新加载”，确认版本 0.5.1。
 3. 开启新的 Codex 聊天，让 Agent 使用收藏。已开启的聊天可能需要重新加载技能列表，也可以明确指定 [Skill](skills/xhs-context/SKILL.md)。
 
 升级保留资料和任务；已安装 Skill 会先备份到 `var/backups`。当前受限时仅更新本机组件和扩展，保持采集停止。安装和测试状态见 [验证记录](docs/validation.md)。
@@ -57,6 +57,8 @@ flowchart LR
 ## 正文与图片分开获取
 
 **正文入口：打开收藏页面 → 扩展 → 读取当前收藏夹。** 个人主页的“收藏 → 笔记”可直接使用。扩展枚举当前页面列表，将标题、正文和原文来源保存到本机。切换其他网页后，打开扩展仍可看进度；列表扫描时需保留原收藏标签页。
+
+浏览器正文补全遇到标签页忙碌、意外关闭或加载超时，会等待约 5 秒、15 秒自动重试同篇笔记，总计最多尝试 3 次，达到上限才暂停。面板显示等待状态，关闭面板后仍可调度。本机连接中断后自动重连，已读但未确认保存的正文会优先重交。手动暂停、登录验证和平台安全限制不会被自动恢复覆盖。升级前已暂停的任务需要点击一次“继续读取正文”。
 
 **图片入口独立提供：**
 
@@ -103,4 +105,4 @@ node --test browser-extension/tests/*.test.mjs
 
 新问题示例见 [evaluation-questions.json](examples/evaluation-questions.json)。`scripts/evaluate_archive.py` 只调用禁用网络的本地搜索，保存时间、字符数、候选与覆盖情况；Task 判读和后续查询由 Agent 完成。个人评测响应放在 `var/evaluation`，不会推送或打包。
 
-当前真实库仍为 851 条发现记录、580 篇已保存非空正文，收藏列表未收齐；保存计数不等于每篇都有完整方法。完整列表覆盖、持续采集可靠性、真实补图、新聊天自动选用 Skill、DeepSeek Harness 接入均未验收。设计依据见 [计划书](小红书收藏上下文项目计划书.md)，版本变更见 [CHANGELOG](CHANGELOG.md)，品牌和面板见 [面板说明](docs/panel-design.md)。
+真实资料库的最新保存数量和任务状态以 `status` 为准；收藏列表未收齐，保存计数不等于每篇都有完整方法。完整列表覆盖、持续采集可靠性、真实补图、新聊天自动选用 Skill、DeepSeek Harness 接入均未验收。设计依据见 [计划书](小红书收藏上下文项目计划书.md)，版本变更见 [CHANGELOG](CHANGELOG.md)，品牌和面板见 [面板说明](docs/panel-design.md)。

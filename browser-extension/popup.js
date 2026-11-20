@@ -4,6 +4,8 @@ let activeImageJob = null;
 const el = id => document.getElementById(id);
 const errors = {
   HOST_NOT_INSTALLED: "请先双击项目里的“安装.cmd”，安装本机组件。",
+  HOST_DISCONNECTED: "本机组件暂时断开，正在自动重连，未确认保存的正文会保留并重新提交。",
+  NATIVE_TIMEOUT: "本机组件响应超时，正在重新连接并重交未确认的结果。",
   SYNC_ALREADY_RUNNING: "另一个同步进程正在运行。关闭旧的 start-sync 窗口或另一浏览器后重试。",
   ACCESS_BLOCKED: "网页拦截了访问，可能要求登录或验证，内容处理已暂停。",
   ACCESS_RESTRICTED: "小红书安全限制（300013）：自动读取已锁定。请停止重试，按平台提示处理；已保存正文仍可离线使用。",
@@ -14,6 +16,9 @@ const errors = {
   PROXY_ERROR: "本机代理暂时无法连接。",
   NETWORK_ERROR: "网络连接失败或超时。",
   BROWSER_CLOSED: "读取用的后台标签页已关闭。",
+  BROWSER_BUSY: "浏览器暂时无法操作标签页，可能正在拖动标签页。",
+  BROWSER_INTERRUPTED: "读取期间本机连接中断。",
+  BROWSER_ERROR: "浏览器操作失败，请检查浏览器后继续。",
   BROWSER_TIMEOUT: "笔记页未在等待时间内加载完成。",
   BROWSER_PARSE_FAILED: "未识别到笔记正文。",
   BODY_MISSING: "未取得笔记正文，可稍后重试。",
@@ -147,11 +152,13 @@ function render(result) {
     const unfinished = queued + running + browserRunning;
     const failed = count(counts.partial) + count(counts.failed);
     const paused = job?.state === "paused" || (!session.finalized && session.scan_state === "paused");
+    const retry = !paused && !restricted && job?.state === 'active' ? job.browser_retry || result.browser_wait : null;
+    const retrySeconds = retry ? Math.max(0, Math.ceil((retry.retry_at - Date.now()) / 1000)) : 0;
     const awaiting = !session.finalized && session.scan_state === "awaiting_confirmation";
     const complete = !!job?.body_complete;
     const title = !connected ? "本机连接中断" : !job ? "正在获取读取进度" :
       restricted ? "访问受限，自动读取已停止" : complete ? (total ? "正文已读完，可供 Agent 使用" : "收藏列表为空") :
-      paused ? "已暂停" : awaiting ? "等待核对列表末尾" :
+      paused ? "已暂停" : retry ? "暂时中断，将自动继续" : awaiting ? "等待核对列表末尾" :
       session.scan_state === "error" ? "读取需要处理" : session.finalized && !unfinished ?
       (failed ? "部分正文需要处理" : "已读笔记正文已保存") :
       browserRunning ? "正在读取笔记正文" : running ? "正在保存正文" : scanning ? "正在读取收藏列表" : "等待读取正文";
@@ -188,6 +195,7 @@ function render(result) {
     if (session.scan_error) detail.push(explain(session.scan_error));
     if (result.last_error) detail.push(explain(result.last_error));
     if (result.browser_error) detail.push(explain(result.browser_error));
+    if (retry) detail.push('等待自动重试' + (retry.max_attempts ? '（已尝试 ' + retry.attempts + '/' + retry.max_attempts + ' 次）' : ''));
     setText("detail", detail.join("；") || (job ? "笔记正文已保存到本机，可以搜索和引用。" : "正在等待本机返回最新状态。"));
     const reasons = job?.failure_summary || [];
     el("failure-reason").hidden = !reasons.length;
@@ -209,7 +217,10 @@ function render(result) {
     for (const id of ["finish", "partial"]) el(id).disabled = busy || !connected;
     el("resume").classList.toggle("secondary", !el("browser-help").hidden || !el("end-check").hidden);
     const attention = session.scan_error || result.browser_error || job?.error || result.last_error;
-    const note = !connected ? "已保存的内容仍在本机。恢复连接后可查看最新进度。" : !job ? "任务已保留，正在等待本机返回进度。" :
+    const note = !connected ? "已保存的内容仍在本机，扩展会自动重连。" : !job ? "任务已保留，正在等待本机返回进度。" :
+      retry ? explain(retry.error) + (retrySeconds ? ' 约 ' + retrySeconds + ' 秒后自动重试，无需点击继续。' : ' 正在等待后台调度自动重试。') :
+      paused && ['BROWSER_BUSY', 'BROWSER_TIMEOUT', 'BROWSER_CLOSED', 'BROWSER_INTERRUPTED'].includes(job.error) ?
+      explain(job.error) + ' 连续尝试未成功，已暂停；处理后可点击继续。' :
       attention ? explain(attention) : complete ? (total ? "现在可以让 Agent 搜索、追读和引用。图片内容尚未处理。" : "当前列表没有笔记。可以返回收藏页核对。") :
       paused ? "已保存的正文会保留，可以随时继续读取。" : job.content_mode === "browser" ? "扩展正在逐篇打开后台笔记页，读取后关闭。" :
       session.finalized && !unfinished ? "已保存的正文可以使用；列表完整性请以上方状态为准。" :

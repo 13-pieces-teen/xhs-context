@@ -131,6 +131,19 @@ def main():
         expect(page.locator("#status-title")).to_have_text("已暂停")
         checks.append("stale_poll_does_not_overwrite_in_flight_action")
 
+        retrying = state(job={**JOB, 'state': 'active', 'content_mode': 'browser',
+                             'browser_retry': {'error': 'BROWSER_BUSY', 'retry_at': 9999999999999, 'attempts': 1, 'max_attempts': 3}},
+                         session={**SESSION, 'finalized': True, 'scan_state': 'partial'})
+        show('automatic-retry', retrying)
+        expect(page.locator('#status-title')).to_have_text('暂时中断，将自动继续')
+        expect(page.locator('#action-note')).to_contain_text('无需点击继续')
+        expect(page.locator('#pause')).to_be_visible()
+        retrying['server_status']['job']['state'] = 'paused'
+        show('paused-during-retry', retrying)
+        expect(page.locator('#status-title')).to_have_text('已暂停')
+        expect(page.locator('#action-note')).not_to_contain_text('自动重试')
+        checks.append('auto_retry_message_never_overrides_manual_pause')
+
         awaiting = state(job={**JOB, "discovered": 48, "body_available": 48, "items": {"ready": 48}, "expected_count": None},
                          session={**SESSION, "scan_state": "awaiting_confirmation"})
         show("awaiting-confirmation", awaiting)
