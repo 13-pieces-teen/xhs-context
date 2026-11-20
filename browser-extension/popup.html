@@ -73,6 +73,19 @@
       <button id="inspect" class="secondary" hidden>刷新页面识别</button>
       <p class="hint footnote">关闭面板也会继续读取。<br>列表读取时，请保留原收藏标签页。</p>
     </section>
+    <section id="image-card" hidden aria-labelledby="image-title">
+      <p class="eyebrow">独立补充图片</p>
+      <h2 id="image-title">图片与正文分开保存</h2>
+      <p id="image-progress" class="hint" role="status" aria-live="polite"></p>
+      <button id="images-current" class="secondary" hidden>保存当前笔记图片</button>
+      <button id="images-collection" class="secondary" hidden>补充本地收藏夹图片</button>
+      <div class="actions">
+        <button id="images-pause" class="secondary" hidden>暂停补图</button>
+        <button id="images-resume" class="secondary" hidden>继续 / 重试补图</button>
+      </div>
+      <p id="image-detail" class="hint"></p>
+      <p class="hint footnote">只保存图片，暂不做 OCR。无法取得图片列表时，可打开笔记页单独保存；仍受平台访问限制。</p>
+    </section>
     <details id="advanced">
       <summary>修正名称与总数</summary>
       <label for="name">本地名称 <span class="hint">默认跟随页面</span></label>
@@ -84,7 +97,7 @@
     </details>
     <p id="message" role="alert" hidden></p>
   </main>
-  <footer>仅保存正文 <span aria-hidden="true">·</span> 图片 / OCR / 视频暂不处理</footer>
+  <footer>正文先读，图片按需补充 <span aria-hidden="true">·</span> OCR / 视频暂不处理</footer>
   <script src="popup.js"></script>
 </body>
 </html>

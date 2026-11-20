@@ -153,5 +153,53 @@
     return {snapshot: {note_id: noteId, page_url: location.href, title: title?.innerText.trim() || "",
       body: desc?.innerText || "", body_present: !!desc}};
   }
-  globalThis.XhsContextPage = {noteFromUrl, pageKey, countFromLabel, rendered, inspect, cards, endMarker, scrollTarget, readNote, pageError};
+  function readImages(noteId) {
+    const root = document.querySelector('#noteContainer');
+    const error = pageError(location.href, document.body?.innerText || '', !!root && rendered(root));
+    if (error) return {error};
+    if (noteFromUrl(location.href)?.note_id !== noteId || !root || !rendered(root)) return {pending: true};
+    // Read only gallery DOM. Avatars, comments and recommendation thumbnails are excluded.
+    const gallery = root.querySelector('.media-container,.note-slider,.swiper-container,.swiper,[data-xhs-gallery]');
+    if (!gallery) return {error: 'IMAGE_LIST_UNAVAILABLE'};
+    const indexed = new Map(), unordered = [];
+    const imageUrl = value => {
+      try {
+        const url = new URL(value, location.href);
+        if (url.protocol === 'https:' && !url.username && !url.password && (!url.port || url.port === '443') &&
+            (url.hostname === 'xhscdn.com' || url.hostname.endsWith('.xhscdn.com') || url.hostname === 'ci.xiaohongshu.com')) return url.href;
+      } catch {}
+      return null;
+    };
+    for (const slide of gallery.querySelectorAll('.swiper-slide,[data-xhs-image-index]')) {
+      const index = slide.getAttribute('data-swiper-slide-index') ?? slide.getAttribute('data-xhs-image-index');
+      const img = slide.querySelector('img');
+      let url = imageUrl(img?.currentSrc || img?.src || img?.getAttribute('data-src'));
+      if (!url) {
+        const background = slide.querySelector('[style*="background-image"]') || slide;
+        const match = getComputedStyle(background).backgroundImage?.match(/^url\(["']?(.*?)["']?\)$/);
+        if (match) url = imageUrl(match[1]);
+      }
+      if (!url) continue;
+      if (index !== null && /^\d+$/.test(index)) indexed.set(Number(index), url);
+      else unordered.push(url);
+    }
+    if (!indexed.size && !unordered.length) {
+      for (const img of gallery.querySelectorAll('img')) {
+        const url = imageUrl(img.currentSrc || img.src || img.getAttribute('data-src'));
+        if (url) unordered.push(url);
+      }
+    }
+    const images = [...new Set([...Array.from(indexed).sort((a, b) => a[0] - b[0]).map(entry => entry[1]), ...unordered])];
+    if (!images.length) return {error: 'IMAGE_LIST_UNAVAILABLE'};
+    if (images.length > 100) return {error: 'IMAGE_LIST_TOO_LARGE'};
+    const totalNode = gallery.querySelector('.swiper-pagination-total,[data-xhs-image-total]');
+    const totalLabel = totalNode?.getAttribute('data-xhs-image-total') || totalNode?.textContent?.trim() || '';
+    // Visible pagination is evidence of a total; the loaded URL count alone is not.
+    const expected = /^\d+$/.test(totalLabel) ? Number(totalLabel) : null;
+    return {snapshot: {note_id: noteId, page_url: location.href, images,
+      image_indices: images.map(url => { const found = [...indexed].find(entry => entry[1] === url); return found ? found[0] + 1 : null; }),
+      expected_images: expected !== null && expected >= images.length && expected <= 100 ? expected : null,
+      note_type: gallery.querySelector('video') ? 'video' : 'image'}};
+  }
+  globalThis.XhsContextPage = {noteFromUrl, pageKey, countFromLabel, rendered, inspect, cards, endMarker, scrollTarget, readNote, readImages, pageError};
 })();

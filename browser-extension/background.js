@@ -58,7 +58,13 @@ async function currentPage() {
   const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
   if (!tab?.id || !tab.url?.startsWith("https://www.xiaohongshu.com/"))
     throw new Error("请在小红书打开要读取的收藏夹。");
+  if (noteFromUrl(tab.url)) throw new Error('当前是笔记页，可以单独保存图片。');
   return inspectTab(tab.id);
+}
+async function currentNote() {
+  const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
+  const note = noteFromUrl(tab?.url);
+  return note && tab?.id ? {...note, tab_id: tab.id} : null;
 }
 
 async function contentSession(message, sender, allowMoved = false) {
@@ -139,9 +145,34 @@ async function handle(message, sender) {
     catch (error) { connectionError = error.message; }
     void flush();
     void browserReader.pump();
-    return {page, page_error: pageError, page_session: pageSession, session, queued: state.queue.length,
+    return {page, note: await currentNote(), page_error: pageError, page_session: pageSession, session, queued: state.queue.length,
       last_error: state.last_error, browser_error: state.browser_error, restriction_pending: state.restriction_pending,
       connection_error: connectionError, server_status: serverStatus};
+  }
+  if (message.type === 'images-current') {
+    await requireAcquisition();
+    const note = await currentNote();
+    if (!note) throw new Error('请打开已归档笔记的详情页。');
+    const result = await chrome.tabs.sendMessage(note.tab_id, {type: 'read-images', note_id: note.note_id});
+    if (result?.error === 'ACCESS_RESTRICTED') {
+      await journal.mutate(s => { s.restriction_pending = true; });
+      await stopScans();
+      await native.request('/v1/access/restrict', {error: 'ACCESS_RESTRICTED'});
+      await journal.mutate(s => { s.restriction_pending = false; });
+    }
+    if (result?.error) throw new Error(result.error);
+    if (!result?.snapshot) throw new Error('图片区域尚未加载，请稍后再试。');
+    return native.request('/v1/image-jobs', {job_id: crypto.randomUUID(), snapshot: result.snapshot});
+  }
+  if (message.type === 'images-collection') {
+    await requireAcquisition();
+    const session = (await journal.load()).sessions[message.job_id];
+    if (!session) throw new Error('请先读取收藏列表。');
+    return native.request('/v1/image-jobs', {job_id: crypto.randomUUID(), collection_id: session.collection_id});
+  }
+  if (['images-pause', 'images-resume'].includes(message.type)) {
+    if (message.type === 'images-resume') await requireAcquisition();
+    return native.request('/v1/image-jobs/' + message.job_id + '/' + (message.type === 'images-pause' ? 'pause' : 'resume'), {});
   }
 
   if (message.type === "start") {

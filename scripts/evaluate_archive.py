@@ -111,7 +111,7 @@ def main():
     results = []
     for case in cases["cases"]:
         request = {"queries": case["queries"], "limit": 8, "max_chars": 12000}
-        request.update({key: case[key] for key in ("content", "required_terms") if key in case})
+        request.update({key: case[key] for key in ("content", "required_terms", "match") if key in case})
         request_path = out / (case["id"] + "-request.json")
         write_json(request_path, request)
         start = time.perf_counter()
@@ -149,7 +149,8 @@ def main():
                "cold_cli_ms": {"min": min(r["cold_cli_ms"] for r in results),
                                "median": statistics.median(r["cold_cli_ms"] for r in results),
                                "max": max(r["cold_cli_ms"] for r in results)},
-               "limits": "Small source-selected known-target cases; not overall relevance or recall accuracy. Character counts are not tokens.",
+               "case_selection": cases.get("selection", "source_selected_known_targets"),
+               "limits": "Small local sample; without exhaustive human labels this is not overall relevance or recall accuracy. Character counts are not tokens.",
                "results": results}
     write_json(out / "retrieval-evaluation.json", summary)
     print(json.dumps({"output": str(out), "notes": audit["notes"], "body_available": audit["body_available"],

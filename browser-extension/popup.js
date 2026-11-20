@@ -1,5 +1,6 @@
 let activeJob = null, busy = false, lastResult = null, refreshVersion = 0;
 let actionError = "", loadError = "", scopeKey = null;
+let activeImageJob = null;
 const el = id => document.getElementById(id);
 const errors = {
   HOST_NOT_INSTALLED: "请先双击项目里的“安装.cmd”，安装本机组件。",
@@ -21,7 +22,15 @@ const errors = {
   NOTE_NOT_FOUND: "返回的页面不包含这篇笔记，可能需要登录。",
   SOURCE_UNAVAILABLE: "原笔记已删除或不可访问。",
   SOURCE_LINK_EXPIRED: "笔记访问链接已失效（300017）。",
-  MEDIA_DEFERRED: "本版暂不处理图片、OCR 和视频。"
+  MEDIA_DEFERRED: "图片尚未保存，可以单独补充。",
+  IMAGE_LIST_UNAVAILABLE: "当前页面没有已加载的图片区域，请打开笔记详情并查看图片。",
+  IMAGE_ALREADY_QUEUED: "这篇笔记已有图片任务，请查看图片进度。",
+  IMAGE_COUNT_UNKNOWN: "图片总数尚未确认，已保存的图片可以使用。",
+  IMAGE_LIST_INCOMPLETE: "图片列表尚未收齐，已保存的图片可以使用。",
+  IMAGE_LIST_UNVERIFIED: "仅保存了已显示的部分图片，尚未确认完整列表。",
+  NOTE_NOT_ARCHIVED: "请先让这篇笔记进入本地收藏列表，再补充图片。",
+  INCOMPLETE_IMAGE_REFRESH: "本次补图未成功，已保留先前保存的图片。",
+  REVISION_CONFLICT: "补图期间正文版本发生变化，已保留正文；请重新发起补图。"
 };
 function explain(value) {
   return [...new Set(String(value).split(",").map(part => errors[part.split(":")[0]] || part))].join(" ");
@@ -67,6 +76,26 @@ function render(result) {
   const page = result.page, session = result.session, job = result.server_status?.job;
   const pageSession = result.page_session, connected = !result.connection_error;
   const restricted = !!result.server_status?.access_restriction || !!result.restriction_pending;
+  const imageJobs = result.server_status?.image_jobs || [];
+  const imageJob = imageJobs.find(job => job.job_id === activeImageJob) || imageJobs[0];
+  activeImageJob = imageJob?.job_id || null;
+  el('image-card').hidden = !connected || (!result.note && !session && !imageJob);
+  el('images-current').hidden = !result.note;
+  el('images-current').disabled = busy || restricted;
+  el('images-collection').hidden = !session;
+  el('images-collection').disabled = busy || restricted;
+  el('images-pause').hidden = !imageJob || imageJob.state !== 'active';
+  el('images-pause').disabled = busy;
+  el('images-resume').hidden = !imageJob || imageJob.state === 'active' || imageJob.complete;
+  el('images-resume').disabled = busy || restricted;
+  setText('image-progress', imageJob ?
+    '图片已保存 ' + imageJob.images_saved + ' 张 · ' + (imageJob.items.ready || 0) + ' / ' + imageJob.notes + ' 篇图片齐全' :
+    '补图单独排队，不改变正文读取进度。');
+  setText('image-detail', imageJob ?
+    (imageJob.state === 'paused' ? '已暂停。' : imageJob.state === 'active' ? '正在后台补图，关闭面板也会继续。' : '本轮补图已结束。') +
+    (imageJob.error ? ' ' + explain(imageJob.error) : '') +
+    imageJob.failures.map(item => ' ' + item.count + ' 篇：' + explain(item.error)).join('') :
+    (session ? '收藏夹：' + session.name : '读取当前笔记已加载的图片区域。'));
   const hostMissing = result.connection_error === "HOST_NOT_INSTALLED";
   const sameTask = !!session && pageSession?.job_id === session.job_id;
   const pageScanning = pageSession && !pageSession.finalized && pageSession.scan_state === "scanning";
@@ -216,9 +245,11 @@ function bind(id, action) {
       busy = false;
       // Re-enable controls without replacing the job just returned by start.
       const requestedJob = activeJob;
+      const requestedImageJob = activeImageJob;
       if (lastResult) render(lastResult);
       else el(id).disabled = false;
       activeJob = requestedJob;
+      activeImageJob = requestedImageJob;
       await refresh().catch(refreshFailed);
       if (!el(id).getClientRects().length) {
         const next = ["pause", "resume", "finish", "open-source", "start", "inspect"]
@@ -247,6 +278,10 @@ bind("browser-start", () => send({type: "browser-start", job_id: activeJob}));
 bind("open-source", () => send({type: "open-source", job_id: activeJob}));
 bind("finish", () => send({type: "finish", job_id: activeJob, verified: true}));
 bind("partial", () => send({type: "finish", job_id: activeJob, verified: false}));
+bind('images-current', async () => { activeImageJob = (await send({type: 'images-current'})).job_id; });
+bind('images-collection', async () => { activeImageJob = (await send({type: 'images-collection', job_id: activeJob})).job_id; });
+bind('images-pause', () => send({type: 'images-pause', job_id: activeImageJob}));
+bind('images-resume', () => send({type: 'images-resume', job_id: activeImageJob}));
 el("confirmed").addEventListener("change", () => { if (lastResult) render(lastResult); });
 refresh().catch(refreshFailed);
 setInterval(() => { if (!busy) refresh().catch(refreshFailed); }, 2500);

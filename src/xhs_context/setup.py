@@ -66,6 +66,7 @@ def install_host(extension_dir, selected_library=None):
     Store(selected_library).initialize()
     atomic_json(manifest_path, value)
     registered = register_host(manifest_path)
-    atomic_json(config_path(), {"library": str(selected_library), "extension_dir": str(extension_dir)})
+    atomic_json(config_path(), {"library": str(selected_library), "extension_dir": str(extension_dir),
+                                "cli_path": str(executable.with_name('xhs-context.exe'))})
     return {"installed": True, "extension_dir": str(extension_dir), "library": str(selected_library),
             "native_host": str(manifest_path), "browsers": ["Chrome", "Edge"], "registry_keys": registered}

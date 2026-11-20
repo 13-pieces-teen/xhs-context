@@ -40,9 +40,11 @@ def coverage(db, collections=()):
 
 
 def status(store, job_id=None):
+    from .image_jobs import image_reports
     with store.read() as db:
         data = {"library": str(store.root), "generation": store.generation(db), "coverage": coverage(db),
                 "access_restriction": access_restriction(db)}
+        data['image_jobs'] = image_reports(db)
         if job_id:
             data["job"] = job_report(db, job_id)
         else:
@@ -61,12 +63,12 @@ def status(store, job_id=None):
 
 
 def validate_search(request):
-    fields(request, {"queries", "collection_ids", "limit", "max_chars", "cursor", "content", "required_terms"})
+    fields(request, {"queries", "collection_ids", "limit", "max_chars", "cursor", "content", "required_terms", "match"})
     if request.get("cursor"):
         cursor = decode_cursor(request["cursor"], "search")
         if cursor.get("search_version") != SEARCH_VERSION:
             raise XhsError("CURSOR_STALE", "Search strategy changed; repeat the original search")
-        if any(k in request for k in ["queries", "collection_ids", "limit", "content", "required_terms"]):
+        if any(k in request for k in ["queries", "collection_ids", "limit", "content", "required_terms", "match"]):
             raise XhsError("INVALID_ARGUMENT", "Use cursor with max_chars only", exit_code=2)
         base = validate_search(cursor.get("request", {}))[0]
         integer(cursor.get("offset"), "cursor offset", 0, 100000)
@@ -86,6 +88,9 @@ def validate_search(request):
     content = request.get("content", "body")
     if not isinstance(content, str) or content not in {"body", "all"}:
         raise XhsError("INVALID_ARGUMENT", "content must be body or all", exit_code=2)
+    match = request.get("match", "terms")
+    if not isinstance(match, str) or match not in {"terms", "phrase"}:
+        raise XhsError("INVALID_ARGUMENT", "match must be terms or phrase", exit_code=2)
     required = request.get("required_terms", [])
     if not isinstance(required, list) or len(required) > 4:
         raise XhsError("INVALID_ARGUMENT", "At most 4 required terms are accepted", exit_code=2)
@@ -94,7 +99,7 @@ def validate_search(request):
         if not terms_for(term):
             raise XhsError("INVALID_ARGUMENT", "A required term must contain searchable text", exit_code=2)
     return {"queries": queries, "collection_ids": list(dict.fromkeys(collections)), "limit": limit,
-            "content": content, "required_terms": list(dict.fromkeys(required))}, None, request.get("max_chars", 6000)
+            "content": content, "match": match, "required_terms": list(dict.fromkeys(required))}, None, request.get("max_chars", 6000)
 
 
 def search(store, request):
@@ -147,7 +152,7 @@ def search(store, request):
             if not required_match(values, base["required_terms"]):
                 continue
             score, matched, matched_fields = rank_document(values, groups, {
-                q: ranks[note_id] for q, ranks in fts_ranks.items() if note_id in ranks})
+                q: ranks[note_id] for q, ranks in fts_ranks.items() if note_id in ranks}, base["match"])
             if not score:
                 continue
             has_body = payload.get("body_state") == "available" and bool(payload.get("body", "").strip())
@@ -192,7 +197,7 @@ def search(store, request):
             next_offset = offset + len(items)
             actual_cursor = cursor_at(len(items)) if next_offset < len(ordered) else None
             return envelope({"items": items, "generation": generation, "coverage": cov,
-                             "content": base["content"], "unavailable_body_matches": metadata_matches,
+                             "content": base["content"], "match": base["match"], "unavailable_body_matches": metadata_matches,
                              "noncontent_body_matches": noncontent_matches,
                              "effective_queries": expanded, "matched_count": len(ordered),
                              "next_cursor": actual_cursor}, warnings=warnings, partial=candidate_limit_reached)
@@ -253,10 +258,33 @@ def read(store, request):
             if base["mode"] == "asset":
                 wanted = set(item.get("asset_ids", []))
                 assets = note.get("images", [])
+                common['media_state'] = note.get('media_state', 'unknown')
+                common['expected_images'] = note.get('expected_images')
+                if not assets:
+                    units.append(dict(common, asset=None))
+                    if note.get('media_state') == 'deferred':
+                        code = 'MEDIA_DEFERRED'
+                    elif note.get('expected_images') == 0:
+                        code = 'ASSET_NOT_FOUND' if wanted else None
+                    else:
+                        code = 'IMAGE_LIST_INCOMPLETE' if note.get('expected_images') else 'IMAGE_COUNT_UNKNOWN'
+                    if code:
+                        errors.append({'note_id': item['note_id'], 'code': code})
+                    continue
                 if note.get("media_state") == "deferred" and not any(a.get("object_path") for a in assets):
                     errors.append({"note_id": item["note_id"], "code": "MEDIA_DEFERRED"})
+                    units.append(dict(common, asset=None))
                     continue
                 missing = wanted - {a["asset_id"] for a in assets}
+                if not wanted:
+                    if note.get('expected_images') is None:
+                        errors.append({'note_id': item['note_id'], 'code': 'IMAGE_COUNT_UNKNOWN'})
+                    elif note.get('expected_images') != len(assets):
+                        errors.append({'note_id': item['note_id'], 'code': 'IMAGE_LIST_INCOMPLETE'})
+                    elif note.get('image_manifest_complete') is False:
+                        errors.append({'note_id': item['note_id'], 'code': 'IMAGE_LIST_UNVERIFIED'})
+                if wanted and missing == wanted:
+                    units.append(dict(common, asset=None))
                 errors.extend({"note_id": item["note_id"], "asset_id": a, "code": "ASSET_NOT_FOUND"} for a in sorted(missing))
                 for asset in assets:
                     if wanted and asset["asset_id"] not in wanted:

@@ -8,8 +8,8 @@ from functools import lru_cache
 
 from .text import normalize, query_groups, tokens
 
-SEARCH_VERSION = "lexical-body-v3"
-READ_VERSION = "grouped-evidence-v2"
+SEARCH_VERSION = "lexical-body-v4"
+READ_VERSION = "grouped-evidence-v3"
 HASHTAG = re.compile(r"(?<![A-Za-z0-9_+])[#＃][\w\u3400-\u9fff]+", re.UNICODE)
 
 
@@ -59,13 +59,26 @@ def required_match(fields, required_terms):
                    for group in query_groups([required]) for query in group) for required in required_terms)
 
 
-def rank_document(fields, groups, fts_ranks):
+def phrase_present(query, value):
+    # Preserve line/field boundaries and Latin word boundaries; normalize horizontal space only.
+    phrase = re.sub(r"[^\S\r\n]+", " ", fold(query)).strip()
+    if not phrase or "\n" in phrase or "\r" in phrase:
+        return False
+    left = r"(?<![a-z0-9_])" if re.match(r"[a-z0-9]", phrase) else ""
+    right = r"(?![a-z0-9_+#])" if re.search(r"[a-z0-9+#]$", phrase) else ""
+    return bool(re.search(left + re.escape(phrase) + right, re.sub(r"[^\S\r\n]+", " ", value)))
+
+
+def rank_document(fields, groups, fts_ranks, match="terms"):
     scored, matched_queries, matched_fields = [], [], set()
     for group in groups:
         best = 0
         for query in group:
             words = terms_for(query)
             if not words:
+                continue
+            phrase_fields = {key for key in ("title", "body", "ocr") if phrase_present(query, fields[key])} if match == "phrase" else set()
+            if match == "phrase" and not phrase_fields:
                 continue
             hits = {key: [present(word, value) for word in words] for key, value in fields.items()}
             if not all(any(hits[key][i] for key in hits) for i in range(len(words))):
@@ -83,7 +96,7 @@ def rank_document(fields, groups, fts_ranks):
                 score += 60 / (60 + rank)
             best = max(best, score)
             matched_queries.append(query)
-            matched_fields.update(key for key, flags in hits.items() if any(flags))
+            matched_fields.update(phrase_fields if match == "phrase" else (key for key, flags in hits.items() if any(flags)))
         if best:
             scored.append(best)
     # Reward independent topic matches slightly, never add a fixed bonus per alias.
@@ -151,6 +164,6 @@ def group_evidence(units, *, continued_key=None, next_key=None):
             grouped[key] = common
         if unit.get("block") is not None:
             grouped[key]["blocks"].append({k: v for k, v in unit["block"].items() if k != "ordinal"})
-        if "asset" in unit:
+        if unit.get("asset") is not None:
             grouped[key]["assets"].append(unit["asset"])
     return list(grouped.values())

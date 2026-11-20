@@ -11,6 +11,14 @@ from .common import SCHEMA_VERSION, XhsError, digest, dumps, now, safe_id
 from .text import TOKENIZER_VERSION, evidence_blocks, indexed, normalize
 
 _WRITE_LOCK = threading.RLock()
+IMAGE_DDL = [
+    "CREATE TABLE IF NOT EXISTS image_jobs(id TEXT PRIMARY KEY,request_hash TEXT NOT NULL,state TEXT NOT NULL,"
+    "error TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS image_items(job_id TEXT NOT NULL REFERENCES image_jobs(id),"
+    "note_id TEXT NOT NULL REFERENCES notes(id),payload TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'queued',"
+    "attempts INTEGER NOT NULL DEFAULT 0,error TEXT,updated_at TEXT NOT NULL,PRIMARY KEY(job_id,note_id))",
+    "CREATE INDEX IF NOT EXISTS image_queue ON image_items(state,updated_at)",
+]
 DDL = """
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS notes(
@@ -75,6 +83,8 @@ class Store:
         with _WRITE_LOCK:
             if self.db_path.exists():
                 with self.write() as db:
+                    for statement in IMAGE_DDL:
+                        db.execute(statement)
                     if "content_mode" not in {row[1] for row in db.execute("PRAGMA table_info(jobs)")}:
                         db.execute("ALTER TABLE jobs ADD COLUMN content_mode TEXT NOT NULL DEFAULT 'anonymous'")
                 with self.read() as db:
@@ -83,6 +93,8 @@ class Store:
             try:
                 db.execute("PRAGMA journal_mode=WAL")
                 db.executescript(DDL)
+                for statement in IMAGE_DDL:
+                    db.execute(statement)
                 db.executemany("INSERT INTO meta VALUES (?,?)",
                                [("schema_version", str(SCHEMA_VERSION)), ("generation", "0"),
                                 ("tokenizer_version", TOKENIZER_VERSION)])

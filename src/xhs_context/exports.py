@@ -80,9 +80,13 @@ def backup(store, destination):
     try:
         for (payload,) in snapshot.execute("SELECT payload FROM revisions"):
             note = json.loads(payload)
-            if note.get("raw_object", {}).get("object_path"):
-                objects.add(note["raw_object"]["object_path"])
+            for key in ('raw_object', 'images_raw_object'):
+                if (note.get(key) or {}).get('object_path'):
+                    objects.add(note[key]['object_path'])
             objects.update(a["object_path"] for a in note.get("images", []) if a.get("object_path"))
+        if snapshot.execute("SELECT 1 FROM sqlite_master WHERE name='image_items' AND type='table'").fetchone():
+            for (payload,) in snapshot.execute('SELECT payload FROM image_items'):
+                objects.update(a['object_path'] for a in json.loads(payload).get('staged_images', []) if a.get('object_path'))
     finally:
         snapshot.close()
     entries = []

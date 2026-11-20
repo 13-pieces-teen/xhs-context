@@ -13,6 +13,8 @@ from .jobs import create_job, finish_scan, receive_batch, set_job_state
 from .worker import Worker, sync_lock
 from .browser_import import enable_browser, next_page, accept_page
 from .access import report_restriction
+from .image_jobs import create_image_job, image_report, set_image_state
+from .images import ImageWorker
 
 
 def dispatch_sync(store, path, body=None):
@@ -23,10 +25,18 @@ def dispatch_sync(store, path, body=None):
         raise XhsError("INVALID_ARGUMENT", "Use a local operation path", exit_code=2)
     if body is None and parsed.path == "/v1/status":
         return status(store, parse_qs(parsed.query).get("job_id", [None])[0])
+    image_route = re.fullmatch(r'/v1/image-jobs/([A-Za-z0-9_-]{1,100})(?:/(pause|resume))?', parsed.path)
+    if body is None and image_route and not image_route[2]:
+        with store.read() as db:
+            return envelope(image_report(db, image_route[1]))
     if body is None:
         raise XhsError("NOT_FOUND", "Unknown local operation")
     if parsed.path == "/v1/access/restrict":
         return envelope(report_restriction(store, body))
+    if parsed.path == '/v1/image-jobs':
+        return envelope(create_image_job(store, body))
+    if image_route and image_route[2]:
+        return envelope(set_image_state(store, image_route[1], 'paused' if image_route[2] == 'pause' else 'active'))
     if parsed.path == "/v1/browser/next":
         return envelope(next_page(store))
     if parsed.path == "/v1/jobs":
@@ -54,6 +64,7 @@ class SyncSession:
         self.store, self.interval = store, interval
         self.stop = threading.Event()
         self.worker = worker_factory(store, ocr=ocr, stop_event=self.stop)
+        self.image_worker = ImageWorker(store, stop_event=self.stop)
         self.lock = sync_lock(store)
         self.thread = threading.Thread(target=self.run, daemon=True)
 
@@ -61,6 +72,7 @@ class SyncSession:
         self.lock.__enter__()
         try:
             self.worker.recover()
+            self.image_worker.recover()
             self.thread.start()
         except BaseException:
             self.lock.__exit__(*sys.exc_info())
@@ -69,9 +81,12 @@ class SyncSession:
 
     def run(self):
         last_export = -1
+        images_first = False
         while not self.stop.is_set():
             try:
-                worked = self.worker.once()
+                first, second = (self.image_worker, self.worker) if images_first else (self.worker, self.image_worker)
+                worked = first.once() or second.once()
+                images_first = not images_first
                 if not worked:
                     with self.store.read() as db:
                         generation = self.store.generation(db)

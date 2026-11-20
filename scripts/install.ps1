@@ -6,7 +6,7 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 Push-Location -LiteralPath $projectRoot
 try {
-    # The text prototype does not install or load OCR models.
+    # Body and image acquisition do not require OCR models.
     & uv sync --frozen --link-mode copy
     if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
     & (Join-Path $projectRoot '.venv\Scripts\xhs-context.exe') doctor
@@ -15,6 +15,7 @@ try {
     if ($Library) { $setupArgs += @('--library', $Library) }
     & (Join-Path $projectRoot '.venv\Scripts\xhs-context.exe') @setupArgs
     if ($LASTEXITCODE -ne 0) { throw 'Browser integration setup failed.' }
+    & (Join-Path $PSScriptRoot 'install-skill.ps1')
     Write-Host 'Ready. Load the browser-extension folder in Chrome or Edge once.'
     Write-Host 'Then open your saved collection and click the extension. No server or pairing is needed.'
 } finally {

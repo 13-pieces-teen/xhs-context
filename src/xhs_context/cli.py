@@ -27,6 +27,7 @@ def parser():
     search.add_argument("--query", action="append", help="Repeat for up to four keyword queries")
     search.add_argument("--content", choices=["body", "all"], help="Default: saved text beyond hashtags or decoration; all includes incomplete leads")
     search.add_argument("--require", dest="required_terms", action="append", help="Required name or topic; aliases accepted")
+    search.add_argument("--match", choices=["terms", "phrase"], help="phrase requires a complete query in one field and line, excluding hashtags")
     search.add_argument("--collection", action="append")
     search.add_argument("--limit", type=int)
     search.add_argument("--max-chars", type=int)
@@ -34,6 +35,16 @@ def parser():
     search.add_argument("--cursor")
     read = commands.add_parser("read", parents=[common])
     read.add_argument("--input", required=True)
+    images = commands.add_parser('images', parents=[common], help='Acquire images independently; search/read never fetch images')
+    image_sub = images.add_subparsers(dest='images_action', required=True)
+    fetch = image_sub.add_parser('fetch', parents=[common])
+    fetch.add_argument('--note', action='append', dest='note_ids')
+    fetch.add_argument('--collection', dest='collection_id')
+    fetch.add_argument('--input')
+    fetch.add_argument('--background', action='store_true', help='Queue only; browser host or images process runs the job')
+    for name in ('status', 'pause', 'resume', 'process'):
+        command = image_sub.add_parser(name, parents=[common])
+        command.add_argument('--job', required=name in {'pause', 'resume'})
     ingest = commands.add_parser("ingest", parents=[common], help="Explicit local snapshot import; not proof of live sync")
     ingest.add_argument("--input", required=True)
     ingest.add_argument("--no-ocr", action="store_true")
@@ -115,18 +126,18 @@ def dispatch(args):
     if args.command == "search":
         from .core import search
         if args.input:
-            if any(getattr(args, key) is not None for key in ["query", "collection", "limit", "max_chars", "cursor", "content", "required_terms"]):
+            if any(getattr(args, key) is not None for key in ["query", "collection", "limit", "max_chars", "cursor", "content", "required_terms", "match"]):
                 raise XhsError("INVALID_ARGUMENT", "Do not mix --input with search shortcut flags", exit_code=2)
             request = read_input(args.input)
         elif args.cursor:
-            if args.query or args.collection or args.limit is not None or args.content is not None or args.required_terms is not None:
+            if args.query or args.collection or args.limit is not None or args.content is not None or args.required_terms is not None or args.match is not None:
                 raise XhsError("INVALID_ARGUMENT", "Use --cursor with --max-chars only", exit_code=2)
             request = {"cursor": args.cursor}
             if args.max_chars is not None:
                 request["max_chars"] = args.max_chars
         else:
             request = {"queries": args.query} if args.query is not None else {}
-            for key in ("content", "required_terms"):
+            for key in ("content", "required_terms", "match"):
                 if getattr(args, key) is not None:
                     request[key] = getattr(args, key)
             if args.collection is not None:
@@ -139,6 +150,8 @@ def dispatch(args):
     if args.command == "read":
         from .core import read
         return read(store, read_input(args.input))
+    if args.command == 'images':
+        return dispatch_images(store, args)
     if args.command == "ingest":
         from .ingest import ingest_file
         result = ingest_file(store, args.input, ocr=not args.no_ocr)
@@ -178,6 +191,44 @@ def dispatch(args):
             while worker.once(args.job):
                 processed += 1
         return envelope({"processed": processed})
+
+
+def dispatch_images(store, args):
+    from .image_jobs import create_image_job, image_report, image_reports, set_image_state
+    from .images import ImageWorker
+    from .worker import sync_lock
+    if args.images_action == 'status':
+        with store.read() as db:
+            return envelope(image_report(db, args.job) if args.job else {'jobs': image_reports(db)})
+    if args.images_action in {'pause', 'resume'}:
+        return envelope(set_image_state(store, args.job, 'paused' if args.images_action == 'pause' else 'active'))
+    job_id = getattr(args, 'job', None)
+    if args.images_action == 'fetch':
+        if args.input:
+            if args.note_ids or args.collection_id:
+                raise XhsError('INVALID_ARGUMENT', 'Do not mix --input with image shortcut flags', exit_code=2)
+            request = read_input(args.input)
+        else:
+            request = {k: getattr(args, k) for k in ('note_ids', 'collection_id') if getattr(args, k) is not None}
+        report = create_image_job(store, request)
+        job_id = report['job_id']
+        if args.background:
+            return envelope({'job': report, 'queued': True})
+    try:
+        with sync_lock(store):
+            worker = ImageWorker(store)
+            worker.recover()
+            while worker.once(job_id):
+                pass
+    except XhsError as exc:
+        if exc.code != 'SYNC_ALREADY_RUNNING':
+            raise
+        with store.read() as db:
+            return envelope({'job': image_report(db, job_id) if job_id else None, 'queued': True,
+                             'processor': 'existing_host', 'message': 'The running host will process queued image jobs'})
+    with store.read() as db:
+        reports = [image_report(db, job_id)] if job_id else image_reports(db)
+    return envelope({'jobs': reports}, partial=any(r['failures'] for r in reports))
 
 
 def main(argv=None):

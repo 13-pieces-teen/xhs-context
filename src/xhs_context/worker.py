@@ -6,7 +6,7 @@ from contextlib import contextmanager
 
 from .common import XhsError, now
 from .network import AnonymousFetcher
-from .processing import LocalOCR, resolve_card, finish_body, body_error
+from .processing import LocalOCR, resolve_card, finish_body, body_error, preserve_separate_images
 from .access import access_restriction, restrict_access
 
 
@@ -61,10 +61,11 @@ class Worker:
                 gaps = (row["error"] or "").split(",")
                 if not all(gap.startswith(("IMAGE_", "OCR_", "THUMBNAIL_", "VIDEO_", "MEDIA_")) for gap in gaps):
                     continue
-                note = finish_body(json.loads(row["payload"]))
+                prior = json.loads(row['payload'])
+                note = preserve_separate_images(finish_body(prior), prior)
                 self.store.publish(note, db=db)
                 db.execute("UPDATE job_items SET state=?,error=?,updated_at=? WHERE job_id=? AND note_id=?",
-                           ("ready" if note["processing_state"] == "ready" else "partial", body_error(note),
+                           ("ready" if note["body_state"] == "available" else "partial", body_error(note),
                             now(), row["job_id"], row["note_id"]))
 
     def stopped(self, job_id):
@@ -110,9 +111,10 @@ class Worker:
                     # with a failed attempt. Retry the whole revision and retain evidence.
                     raise XhsError("INCOMPLETE_REFRESH", "Previous version retained after an incomplete refresh",
                                    details={"gaps": acquisition_gaps})
+                if not self.media:
+                    note = preserve_separate_images(note, prior)
                 self.store.publish(note, db=db)
-                ready = note["processing_state"] == "ready" and (note["content_state"] == "complete" if self.media else
-                                                                 note["body_state"] == "available")
+                ready = (note["processing_state"] == "ready" and note["content_state"] == "complete") if self.media else note["body_state"] == "available"
                 db.execute("UPDATE job_items SET state=?,error=?,updated_at=? WHERE job_id=? AND note_id=?",
                            ("ready" if ready else "partial", None if ready else
                             (",".join(note["gaps"])[:1000] if self.media else body_error(note)),

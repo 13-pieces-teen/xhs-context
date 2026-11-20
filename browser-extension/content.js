@@ -50,6 +50,8 @@
   }
   chrome.runtime.onMessage.addListener((message, sender, respond) => {
     (async () => {
+      if (message.type === 'read-images')
+        return globalThis.XhsContextPage.readImages(message.note_id);
       if (message.type === "inspect")
         return inspect();
       if (message.type === "read-note")

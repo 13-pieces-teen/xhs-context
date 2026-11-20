@@ -148,6 +148,27 @@ def body_error(note):
     return ",".join(gap for gap in note.get("gaps", []) if gap.startswith("BODY_")) or None
 
 
+def preserve_separate_images(note, prior):
+    """A body refresh cannot discard independently acquired images."""
+    if prior.get('content_scope') not in {'images', 'body_and_images'}:
+        return note
+    merged = dict(note)
+    for key in ('images', 'expected_images', 'media_state', 'image_manifest_complete', 'images_source', 'images_raw_object', 'images_body_revision'):
+        if key in prior:
+            merged[key] = prior[key]
+    if merged.get('note_type') in {None, 'unknown'}:
+        merged['note_type'] = prior.get('note_type', 'unknown')
+    merged = finish_content(merged)
+    if prior.get('image_manifest_complete') is False and 'IMAGE_LIST_INCOMPLETE' not in merged['gaps']:
+        merged['gaps'].append('IMAGE_LIST_UNVERIFIED')
+        merged['content_state'] = 'partial'
+    merged['content_scope'] = 'body_and_images' if merged.get('body_state') == 'available' else 'images'
+    if merged.get('body') != prior.get('body') or 'IMAGES_CAPTURED_SEPARATELY' in prior.get('gaps', []):
+        merged['gaps'].append('IMAGES_CAPTURED_SEPARATELY')
+        merged['content_state'] = 'partial'
+    return merged
+
+
 def resolve_card(store, card, fetcher, ocr=None, stop=None, *, media=False):
     if card.get("browser_snapshot"):
         note = dict(card["browser_snapshot"])

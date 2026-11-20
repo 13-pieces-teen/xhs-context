@@ -1,6 +1,6 @@
 # 原型协议与边界
 
-当前同步范围为正文（content_scope=body）：保存标题、正文、来源和版本，不下载图片、不运行 OCR。媒体仍是后续目标；历史版本与显式导入的既有媒体保持可读。
+默认收藏同步保存正文（content_scope=body）。0.5.0 新增独立图片任务：正文和图片可分次取得，图片下载不启动 OCR、不重新导入正文。历史版本与既有媒体保持可读。
 
 ## 本机同步接口
 
@@ -28,6 +28,10 @@
 | POST /v1/jobs/ID/browser-result | note_id、lease_id，以及 snapshot 或 error |
 | POST /v1/access/restrict | error=ACCESS_RESTRICTED；记录安全限制并停止本库所有任务；无解除接口 |
 | GET /v1/status?job_id=ID | 范围、批次、内容处理与失败摘要 |
+| POST /v1/image-jobs | note_ids、collection_id、snapshot 三选一，可传 job_id 实现请求幂等 |
+| GET /v1/image-jobs/ID | 独立图片进度、失败原因、最新版本；最多返回 50 篇明细并标记 results_limited |
+| POST /v1/image-jobs/ID/pause | 暂停图片队列，不影响正文任务 |
+| POST /v1/image-jobs/ID/resume | 恢复图片队列及尝试次数未满的失败项；受停止保护约束 |
 
 扩展每批最多 25 条。批次内容哈希用于幂等校验：相同 job_id + seq 的相同内容可重发，不同内容返回 CONFLICT。ACK 只在数据库事务提交后返回。
 
@@ -53,7 +57,7 @@
 
 ## 检索接口
 
-0.4.0 的响应信封使用 `schema_version=2`。本轮调整了 search 默认筛选和 read 返回结构；SQLite 存储版本仍为 1，已有原文、修订、证据 ID、队列和停止保护无需迁移，索引无需重建。工作区的正文内容过滤将搜索策略升级为 `lexical-body-v3`；先前搜索游标返回 `CURSOR_STALE`，客户端应重新发起原请求。固定版本 read 的格式与游标策略不变。
+0.5.0 的响应信封仍为 `schema_version=2`。SQLite 存储版本仍为 1，初始化时幂等补建 image_jobs / image_items 两张表，已有原文、修订、证据 ID、正文队列和停止保护保留，索引无需重建。搜索策略为 `lexical-body-v4`，读取策略为 `grouped-evidence-v3`；旧游标返回 `CURSOR_STALE`，客户端应重新发起原请求。
 
 search JSON 字段：
 
@@ -110,12 +114,24 @@ read.json 示例，ID 取自搜索结果：
 
 备份及恢复目标必须为新目录。`exports/current.json` 指向完整阅读快照；备份包含数据库及引用对象，不含配对信息。其他管理命令有 `sync pause --job ID`、`sync resume --job ID`、`reindex`、`note delete ID` 和 `note restore ID`；删除是软删除。
 
+## 独立图片获取
+
+`images fetch --note ID` 支持重复指定笔记；`--collection ID` 处理本地该收藏夹现有成员，不重新枚举网页收藏。`--input request.json` 接收与 POST /v1/image-jobs 相同的请求。三类输入不能混用。`--background` 仅排队；默认优先交给已运行本机组件，未被占用时在前台处理。`images process [--job ID]` 可显式运行队列，`images status [--job ID]` 查看进度；pause / resume 需指定 job，resume 不会启动新后台进程。
+
+浏览器 snapshot 包含 note_id、page_url、images（1–100 个允许域名的 HTTPS 链接），以及可选 image_indices、expected_images、note_type。它只从已打开详情的图片区域读取，不包含 Cookie。未知总数保持 null，不能把当前 DOM 图片数当作总数。
+
+单独补图优先复用已存图片清单，否则解析普通网页取得清单；只发布图片相关变化，保留正文和原始正文快照。每张图片完成后保存检查点，发布前核对笔记版本；并发正文更新返回 REVISION_CONFLICT。失败刷新保留旧的可用版本。正文后续更新保留单独取得的图片，并通过 IMAGES_CAPTURED_SEPARATELY 说明并非同次页面快照。
+
+`read mode=asset` 每篇返回 media_state、expected_images 和 assets；空图片列表仍返回该篇及错误：MEDIA_DEFERRED（未获取）、IMAGE_COUNT_UNKNOWN（总数未知）、IMAGE_LIST_INCOMPLETE / IMAGE_LIST_UNVERIFIED（清单不全或未确认）、ASSET_MISSING（文件缺失）。确认图片总数为 0 且未要求具体 asset_id 才能完整返回空列表。成功补图的结果包含新 revision_id，按新版本读取图片；旧引用不失效。
+
+`search --match phrase` / JSON `match=phrase` 要求每条完整查询在标题、正文或已有 OCR 的同一行连续出现，忽略大小写、全半角和横向空白差异，沿用等价别名；标签不能单独满足。默认 terms 不变，短语模式会遗漏改写。游标保留模式，续页仍只能附加 max_chars。
+
 ## 已知实现限制
 
 - 页面适配器使用收藏卡片和笔记正文 DOM，以及常见列表终点元素；它不监听私有接口、不读取 Cookie。网站改版、缺失或过期链接仍可能造成正文缺口。大收藏列表的全量覆盖仍需单独核对。
 - 平台文件夹 ID 未作普遍验证，扩展按页面地址和可见视图标记保存 local_view 身份。自动识别名称不等于确认原平台文件夹 ID；名称与总数可手动修正。
 - 匿名页面解析只接受可解析的序列化初始状态，不执行网页 JavaScript。只有识别到笔记详情结构才将正文标记为已取得；仅命中信息流预览时记录 BODY_UNVERIFIED，不计为正文完成。没有支持的状态时失败，保留上一个可用版本。这种结构判断仍需真实页面人工核对。
-- 本版不获取图片或视频。图片笔记中的信息没有进入正文检索；asset 请求遇到媒体未处理时明确返回 MEDIA_DEFERRED。已有本地媒体及旧版本证据保留。
+- 图片获取已在隔离夹具通过，真实网站图片区域适配未验收；懒加载图片可能不全，下载的是页面提供版本，不保证最高分辨率。新下载的图片不运行 OCR，因此不会自动进入文字检索；视频仍未实现。
 - 确认停止增长不代表完整；扩展等待用户核对。暂停时允许当前网络请求结束，但不再发布尚未完成的处理结果。
 - 每次新扫描都会重新尝试已枚举笔记的正文读取。版本和对象按哈希去重，刷新频率策略尚未优化。
 - 搜索是中文分词、字面匹配、少量别名与相关性融合；没有 embedding 或重排模型。

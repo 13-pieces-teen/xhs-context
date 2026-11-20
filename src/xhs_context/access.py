@@ -27,6 +27,9 @@ def restrict_access(db, *, error="ACCESS_RESTRICTED", source="browser"):
                (dumps(restriction),))
     db.execute("UPDATE jobs SET state='paused',error=?,updated_at=? WHERE state IN ('active','paused')",
                (restriction["error"], now()))
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='image_jobs'").fetchone():
+        db.execute("UPDATE image_jobs SET state='paused',error=?,updated_at=? WHERE state IN ('active','paused')",
+                   (restriction['error'], now()))
     return restriction
 
 
@@ -41,6 +44,8 @@ def unlock_access(store, *, confirmed=False):
         # Unlocking only changes the local guard; it neither probes XHS nor resumes jobs.
         db.execute("UPDATE jobs SET state='paused',updated_at=? WHERE state='active'", (now(),))
         db.execute("UPDATE jobs SET error=NULL WHERE error IN ('ACCESS_RESTRICTED','RATE_LIMITED')")
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='image_jobs'").fetchone():
+            db.execute("UPDATE image_jobs SET state='paused',error=NULL WHERE state='active' OR error IN ('ACCESS_RESTRICTED','RATE_LIMITED')")
         db.execute("DELETE FROM meta WHERE key='access_restriction'")
     return {"unlocked": previous is not None, "jobs_resumed": False}
 

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "xhs-context · 收藏上下文",
-  "version": "0.4.0",
-  "version_name": "0.4.0 prototype",
+  "version": "0.5.0",
+  "version_name": "0.5.0 prototype",
   "description": "打开收藏夹，一键读取到本机，供 Agent 检索和引用。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAp4ESaox5gxJwvGJjZrNk1skPkLxET9Y+AfGTNT/pYA5clU7dHbkwv/roQQ9BVoRDEh18RP8Bipm8k64oybTx7S5Xmrv5jekUr2m6VkV6N49Q9UP5lS1oJEoYjmv0anJ8iOzId0+5JDhLSh7L26KmOAKpl4JR1uwcxpJtPQxJW3tBE9J4wEPPHU/98S5ya1Lx+gS9+N5c6X3dts9ADpU2QLT2IhTgMrY32mrc/HTFA2AKiaTc2J7uJSDwSo5lxMMod8FkfbGZzt1zLyjz8oFpI8kY+jp+d5DioaHqXh9cwafnLc+c7yg3AZNQ5liJqO6xYykCdotAmj/+dtZRDn7AuwIDAQAB",
   "minimum_chrome_version": "120",

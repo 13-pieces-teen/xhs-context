@@ -7,7 +7,7 @@ import uuid
 
 from .common import XhsError, dumps, fields, integer, now, safe_id, text_field
 from .network import validate_note_url, validate_url
-from .processing import finish_body, body_error
+from .processing import finish_body, body_error, preserve_separate_images
 from .access import access_restriction, require_access, restrict_access
 
 
@@ -134,7 +134,7 @@ def accept_page(store, job_id, request):
             unchanged = previous.get("body_state") == "available" and all(
                 previous.get(key) == note.get(key) for key in ("title", "body"))
             if not unchanged and (ready or previous.get("body_state") != "available"):
-                store.publish(note, db=db)
+                store.publish(preserve_separate_images(note, previous), db=db)
             db.execute("UPDATE job_items SET payload=?,state=?,error=?,updated_at=? WHERE job_id=? AND note_id=?",
                        (dumps(payload), "ready" if ready else "partial", body_error(note), now(), job_id, note_id))
         else:

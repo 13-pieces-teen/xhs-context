@@ -20,7 +20,7 @@ OUT = ROOT / "var/validation"
 OUT.mkdir(parents=True, exist_ok=True)
 
 
-def prepare_host(work, host_name, extension):
+def prepare_host(work, host_name, extension, *, with_images=False):
     # Reuse the installed console launcher, replacing only its Python entry script.
     # This fixture transport exists only inside this isolated test installation.
     template = ROOT / ".venv/Scripts/xhs-context-native.exe"
@@ -37,11 +37,16 @@ from xhs_context.common import XhsError
 from xhs_context.storage import Store
 from xhs_context.sync_service import SyncSession
 from xhs_context.worker import Worker
+from xhs_context.images import ImageWorker
 work = Path(WORK_PATH)
 class FixtureTransport:
     def get(self, url, **kwargs):
         if kwargs.get('media'):
-            raise AssertionError('The text prototype must not download media')
+            if not IMAGES_ENABLED:
+                raise AssertionError('The text prototype must not download media')
+            with (work / 'media-requests.log').open('a', encoding='utf-8') as f:
+                f.write(url + '\\n')
+            return (work / 'fixture-image.png').read_bytes(), 'image/png', url
         identifier = url.split('?')[0].rstrip('/').split('/')[-1]
         if int(identifier, 16) >= 9000:
             raise XhsError('ACCESS_BLOCKED', 'Synthetic login wall')
@@ -57,7 +62,9 @@ def fixture_worker(store, **kwargs):
     worker.ocr = FixtureOCR()
     return worker
 def session(store):
-    return SyncSession(store, ocr=False, interval=.02, worker_factory=fixture_worker)
+    session = SyncSession(store, ocr=False, interval=.02, worker_factory=fixture_worker)
+    session.image_worker = ImageWorker(store, fetcher=FixtureTransport(), stop_event=session.stop)
+    return session
 if os.name == 'nt':
     import msvcrt
     msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
@@ -69,7 +76,7 @@ sys.stdout = sys.stderr = log
 result = serve_native(Store(work / 'library'), source, sink, session_factory=session)
 (work / 'host-finished.json').write_text(json.dumps({'exit_code': result}))
 log.close()
-""".replace("WORK_PATH", repr(str(work))).replace("FIXTURE_IMAGE", repr(str(ROOT / "examples/ocr-card.png")))
+""".replace("WORK_PATH", repr(str(work))).replace('IMAGES_ENABLED', repr(with_images))
     with ZipFile(executable, "a", ZIP_DEFLATED) as archive:
         archive.writestr("__main__.py", bootstrap.encode("utf-8"))
     # uv launchers also keep the interpreter path after the ZIP end record.
