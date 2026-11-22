@@ -114,23 +114,47 @@ def decode_cursor(value, kind):
 
 
 def bounded_page(units, offset, make_response, max_chars, make_cursor):
-    """Budget the complete serialized envelope, including the next-page cursor."""
+    """Budget the complete serialized envelope, including the next-page cursor.
+
+    Returns the same page as adding units one at a time until the next one no
+    longer fits, but probes sizes by galloping and bisection. While a cursor is
+    present the size grows with every unit, so O(log n) serializations suffice.
+    """
     integer(max_chars, "max_chars", 512, 200000)
-    selected = []
-    for unit in units[offset:]:
-        candidate = selected + [unit]
-        next_offset = offset + len(candidate)
+    remaining = len(units) - offset
+
+    def size(count):
+        next_offset = offset + count
         cursor = make_cursor(next_offset) if next_offset < len(units) else None
-        response = make_response(candidate, cursor)
-        if len(dumps(response)) > max_chars:
-            if not selected:
-                raise XhsError("OUTPUT_BUDGET_TOO_SMALL", "Increase max_chars to fit one complete evidence unit",
-                               details={"minimum_chars": len(dumps(response))}, exit_code=2)
-            break
-        selected = candidate
-    cursor = make_cursor(offset + len(selected)) if offset + len(selected) < len(units) else None
-    response = make_response(selected, cursor)
-    if len(dumps(response)) > max_chars:
+        response = make_response(units[offset:next_offset], cursor)
+        return len(dumps(response)), response
+
+    count = 0
+    if remaining > 0:
+        first, _ = size(1)
+        if first > max_chars:
+            raise XhsError("OUTPUT_BUDGET_TOO_SMALL", "Increase max_chars to fit one complete evidence unit",
+                           details={"minimum_chars": first}, exit_code=2)
+        # Largest count below `remaining` (cursor still present) that fits.
+        good, bad, step = 1, None, 1
+        while bad is None and good < remaining - 1:
+            probe = min(good + step, remaining - 1)
+            if size(probe)[0] <= max_chars:
+                good, step = probe, step * 2
+            else:
+                bad = probe
+        while bad is not None and bad - good > 1:
+            middle = (good + bad) // 2
+            if size(middle)[0] <= max_chars:
+                good = middle
+            else:
+                bad = middle
+        count = good
+        # The final page has no cursor and is reachable only if every shorter page fit.
+        if good == remaining - 1 and remaining > 1 and size(remaining)[0] <= max_chars:
+            count = remaining
+    length, response = size(count)
+    if length > max_chars:
         raise XhsError("OUTPUT_BUDGET_TOO_SMALL", "Budget cannot fit response metadata", exit_code=2)
     return response
 
