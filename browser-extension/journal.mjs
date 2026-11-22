@@ -26,6 +26,20 @@ export class Journal {
       state.last_error = null;
     });
   }
+  // The local host already closed this list scan (for example, another browser took it over).
+  async dropFinalizedScan(jobId) {
+    return this.mutate(state => {
+      state.queue = state.queue.filter(q => !(q.job_id === jobId && /\/(batches|finish)$/.test(q.path)));
+      const session = state.sessions[jobId];
+      if (session && !session.finalized) {
+        session.finalized = true;
+        session.scan_state = "partial";
+        session.scan_error = "SCAN_FINALIZED";
+      }
+      state.last_error = null;
+      return session?.tab_id ?? null;
+    });
+  }
   async push(path, body, jobId) {
     return this.mutate(state => state.queue.push({
       id: crypto.randomUUID(), path, body, job_id: jobId

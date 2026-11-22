@@ -36,6 +36,24 @@ test("concurrent durable mutations retain both requests", async () => {
   assert.equal((await journal.load()).queue.length, 2);
 });
 
+test("a scan closed by the host drops only its list requests", async () => {
+  const journal = new Journal(storage());
+  await journal.mutate(state => {
+    state.sessions.old = {job_id: "old", tab_id: 7, finalized: false, scan_state: "scanning"};
+    state.sessions.other = {job_id: "other", tab_id: 8, finalized: false, scan_state: "scanning"};
+  });
+  await journal.push("/v1/jobs/old/batches", {seq: 1}, "old");
+  await journal.push("/v1/jobs/other/batches", {seq: 0}, "other");
+  await journal.push("/v1/jobs/old/pause", {}, "old");
+  await journal.push("/v1/jobs/old/finish", {batch_count: 2}, "old");
+  assert.equal(await journal.dropFinalizedScan("old"), 7);
+  const state = await journal.load();
+  assert.deepEqual(state.queue.map(q => q.path), ["/v1/jobs/other/batches", "/v1/jobs/old/pause"]);
+  assert.equal(state.sessions.old.finalized, true);
+  assert.equal(state.sessions.old.scan_state, "partial");
+  assert.equal(state.sessions.other.finalized, false);
+});
+
 test("page identity keeps folder query but excludes access token", () => {
   assert.equal(pageKey("https://www.xiaohongshu.com/user/profile/me?folder_id=3&xsec_token=secret"),
     "https://www.xiaohongshu.com/user/profile/me?folder_id=3");

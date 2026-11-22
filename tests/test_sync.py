@@ -183,4 +183,35 @@ def test_collection_cannot_have_two_open_scans(store):
     with pytest.raises(XhsError) as caught:
         create(store, "two")
     assert caught.value.code == "SCAN_ALREADY_RUNNING"
+    assert caught.value.details["job_id"] == "one"
+
+
+def test_stale_orphaned_scan_is_taken_over_without_removing_members(store):
+    create(store, "orphan")
+    receive_batch(store, "orphan", {"seq": 0, "items": [card(1), card(2)]})
+    with store.write() as db:
+        db.execute("UPDATE jobs SET updated_at='2000-01-01T00:00:00.000+00:00' WHERE id='orphan'")
+    result = create(store, "fresh")
+    assert result["superseded_job"] == "orphan"
+    with store.read() as db:
+        old = job_report(db, "orphan")
+        assert old["scan_state"] == "partial" and old["end_evidence"] == "interrupted"
+        states = {r[0] for r in db.execute("SELECT state FROM memberships")}
+    assert states == {"present"}
+    # The lost browser's late batch is rejected with a dedicated code it can act on.
+    with pytest.raises(XhsError) as caught:
+        receive_batch(store, "orphan", {"seq": 1, "items": [card(3)]})
+    assert caught.value.code == "SCAN_FINALIZED"
+    assert finish(store, "orphan", batches=1)["duplicate"]
+
+
+def test_cli_abandon_closes_an_open_scan(store, capsys):
+    from xhs_context.cli import main
+    create(store, "open")
+    assert main(["--library", str(store.root), "sync", "abandon", "--job", "open"]) == 0
+    assert json.loads(capsys.readouterr().out)["data"]["changed"]
+    assert main(["--library", str(store.root), "sync", "abandon", "--job", "open"]) == 0
+    assert not json.loads(capsys.readouterr().out)["data"]["changed"]
+    assert create(store, "next")["duplicate"] is False
+    assert main(["--library", str(store.root), "sync", "abandon", "--job", "missing"]) == 4
 

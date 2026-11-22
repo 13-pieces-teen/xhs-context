@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 
 from .common import XhsError, digest, fields, integer, now, safe_id, text_field, dumps
 from .network import validate_note_url, validate_page_url
 from .access import access_restriction, require_access
+
+SCAN_TAKEOVER_SECONDS = 30 * 60
 
 
 def validate_collection(value):
@@ -34,9 +37,19 @@ def create_job(store, request):
         prior = db.execute("SELECT * FROM collections WHERE id=?", (collection["id"],)).fetchone()
         if prior and prior["source_url"] != collection["source_url"]:
             raise XhsError("CONFLICT", "Collection identity belongs to a different page")
-        if db.execute("SELECT id FROM jobs WHERE collection_id=? AND scan_state='scanning'",
-                      (collection["id"],)).fetchone():
-            raise XhsError("SCAN_ALREADY_RUNNING", "Finish or resume the existing scan for this collection")
+        superseded = None
+        open_scan = db.execute("SELECT id,updated_at FROM jobs WHERE collection_id=? AND scan_state='scanning'",
+                               (collection["id"],)).fetchone()
+        if open_scan:
+            # A browser whose local journal was lost can never finish its scan. After a quiet
+            # period another browser may take over; the old list is kept as an interrupted scan.
+            cutoff = (datetime.now(timezone.utc) - timedelta(seconds=SCAN_TAKEOVER_SECONDS)).isoformat(timespec="milliseconds")
+            if open_scan["updated_at"] >= cutoff:
+                raise XhsError("SCAN_ALREADY_RUNNING", "Finish or resume the existing scan for this collection",
+                               details={"job_id": open_scan["id"], "updated_at": open_scan["updated_at"],
+                                        "takeover_after_seconds": SCAN_TAKEOVER_SECONDS})
+            interrupt_scan(db, open_scan["id"])
+            superseded = open_scan["id"]
         db.execute("INSERT INTO collections VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
                    "name=excluded.name,last_job=excluded.last_job,updated_at=excluded.updated_at",
                    (collection["id"], collection["name"], collection["source_url"],
@@ -44,7 +57,28 @@ def create_job(store, request):
         db.execute("INSERT INTO jobs(id,collection_id,expected_count,created_at,updated_at) VALUES (?,?,?,?,?)",
                    (job_id, collection["id"], expected, now(), now()))
         store.bump(db)
-    return {"job_id": job_id, "duplicate": False}
+    result = {"job_id": job_id, "duplicate": False}
+    if superseded:
+        result["superseded_job"] = superseded
+    return result
+
+
+def interrupt_scan(db, job_id):
+    """Close a list scan as interrupted. Interrupted scans never remove memberships."""
+    db.execute("UPDATE jobs SET scan_state='partial',end_evidence='interrupted',applied=1,updated_at=? "
+               "WHERE id=? AND scan_state='scanning'", (now(), job_id))
+
+
+def abandon_scan(store, job_id):
+    with store.write() as db:
+        job = db.execute("SELECT scan_state FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not job:
+            raise XhsError("JOB_NOT_FOUND", "Unknown job")
+        if job["scan_state"] != "scanning":
+            return {"job_id": job_id, "scan_state": job["scan_state"], "changed": False}
+        interrupt_scan(db, job_id)
+        store.bump(db)
+    return {"job_id": job_id, "scan_state": "partial", "end_evidence": "interrupted", "changed": True}
 
 
 def validate_card(card):
@@ -72,7 +106,7 @@ def receive_batch(store, job_id, request):
                 raise XhsError("CONFLICT", "Batch sequence reused with different content")
             return {"job_id": job_id, "seq": seq, "accepted": existing["item_count"], "duplicate": True}
         if job["scan_state"] != "scanning":
-            raise XhsError("CONFLICT", "This scan is finalized; start a new job")
+            raise XhsError("SCAN_FINALIZED", "This scan is finalized; start a new job")
         membership_changed = False
         for item in items:
             store.note_row(db, item)

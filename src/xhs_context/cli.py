@@ -78,6 +78,9 @@ def parser():
     for name in ["pause", "resume"]:
         command = sub.add_parser(name, parents=[common])
         command.add_argument("--job", required=True)
+    abandon = sub.add_parser("abandon", parents=[common],
+                             help="Close an unfinished list scan as interrupted; memberships are never removed")
+    abandon.add_argument("--job", required=True)
     unlock = sub.add_parser("unlock", parents=[common], help="Clear the local restriction guard without resuming jobs")
     unlock.add_argument("--confirm-access-restored", action="store_true")
     return root
@@ -195,6 +198,9 @@ def dispatch(args):
         if args.sync_action == "unlock":
             from .access import unlock_access
             return envelope(unlock_access(store, confirmed=args.confirm_access_restored))
+        if args.sync_action == "abandon":
+            from .jobs import abandon_scan
+            return envelope(abandon_scan(store, args.job))
         if args.sync_action in {"pause", "resume"}:
             from .jobs import set_job_state
             return envelope(set_job_state(store, args.job, "paused" if args.sync_action == "pause" else "active",

@@ -7,6 +7,8 @@ const errors = {
   HOST_DISCONNECTED: "本机组件暂时断开，正在自动重连，未确认保存的正文会保留并重新提交。",
   NATIVE_TIMEOUT: "本机组件响应超时，正在重新连接并重交未确认的结果。",
   SYNC_ALREADY_RUNNING: "另一个同步进程正在运行。关闭旧的 start-sync 窗口或另一浏览器后重试。",
+  SCAN_ALREADY_RUNNING: "另一个浏览器或旧的扩展记录仍在读取这个收藏夹。它 30 分钟没有进展后可在这里重新开始，也可以用命令 sync abandon 结束旧的读取。",
+  SCAN_FINALIZED: "这次列表读取已在别处结束，已保存的条目都保留；可以重新读取当前收藏夹。",
   ACCESS_BLOCKED: "网页拦截了访问，可能要求登录或验证，内容处理已暂停。",
   ACCESS_RESTRICTED: "小红书安全限制（300013）：自动读取已锁定。请停止重试，按平台提示处理；已保存正文仍可离线使用。",
   RATE_LIMITED: "小红书限制了请求频率，自动读取已锁定。请停止重试，先按平台提示处理。",

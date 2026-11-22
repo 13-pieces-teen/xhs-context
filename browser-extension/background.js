@@ -40,6 +40,11 @@ async function flush() {
         await native.request(pending.path, pending.body);
         await journal.acknowledge(pending.id);
       } catch (error) {
+        if (error.message === "SCAN_FINALIZED" && /\/batches$/.test(pending.path)) {
+          const tabId = await journal.dropFinalizedScan(pending.job_id);
+          if (tabId !== null) chrome.tabs.sendMessage(tabId, {type: "pause"}).catch(() => {});
+          continue;
+        }
         await journal.mutate(s => { s.last_error = String(error.message).slice(0, 200); });
         break;
       }
@@ -121,6 +126,8 @@ async function handle(message, sender) {
       throw new Error("无效读取状态");
     await journal.mutate(state => {
       const session = state.sessions[message.job_id];
+      // A scan closed by the local host stays closed; late page reports are ignored.
+      if (session.finalized) return;
       session.scan_state = message.state;
       session.scan_error = String(message.error || "").slice(0, 200);
     });
@@ -204,6 +211,8 @@ async function handle(message, sender) {
     const session = {job_id: jobId, collection_id: collectionId, tab_id: page.tab_id,
       page_key: page.page_key, view_marker: page.view_marker, name,
       next_seq: 0, discovered: 0, scan_state: "scanning", finalized: false, started_at: new Date().toISOString()};
+    // Deliver a pending finish first, so the previous scan of this view is closed.
+    await flush();
     await native.request("/v1/jobs", {job_id: jobId, expected_count: expected,
       collection: {id: collectionId, name, source_url: page.page_key, identity_kind: "local_view"}});
     await journal.mutate(state => {

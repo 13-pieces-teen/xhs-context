@@ -35,7 +35,7 @@
 
 扩展每批最多 25 条。批次内容哈希用于幂等校验：相同 job_id + seq 的相同内容可重发，不同内容返回 CONFLICT。ACK 只在数据库事务提交后返回。
 
-同一收藏视图同时只允许一个未结束扫描，避免交错扫描错误更新成员关系。结束列表扫描后仍可暂停或恢复内容处理；此时恢复只重试未完成内容，不重新提交列表批次。
+同一收藏视图同时只允许一个未结束扫描，避免交错扫描错误更新成员关系。新建时若已有未结束扫描，返回 `SCAN_ALREADY_RUNNING`（details 含 job_id、updated_at）；若该扫描 30 分钟没有新批次或状态更新（通常是另一浏览器或扩展本地记录丢失），新任务会接管，旧扫描按 interrupted 结束并在结果中以 `superseded_job` 返回，不移除任何成员。也可用 `sync abandon --job ID` 立即结束。已结束扫描再收到批次返回 `SCAN_FINALIZED`，扩展据此丢弃该扫描的待发批次并停止滚动。结束列表扫描后仍可暂停或恢复内容处理；此时恢复只重试未完成内容，不重新提交列表批次。
 
 扫描终点依据是 page_end、user_verified、unknown 或 interrupted。只有前两种、批次连续且预期数量匹配时列表才完整。unknown 和 interrupted 永远不触发成员移除。两个独立完整扫描均未见到旧成员后才标记 removed；重复的 finish 请求不重复累积缺席。
 
@@ -124,7 +124,7 @@ read.json 示例，ID 取自搜索结果：
 
 `evidence` 返回指定块和邻近上下文，`full` 按顺序读取，`asset` 用 `asset_ids` 返回本机原图路径。复杂请求使用 UTF-8 JSON 文件或 `--input -`。stdout 为单个 JSON，stderr 为诊断；退出码 0 成功、2 输入错误、3 部分成功、4 状态或对象问题、5 运行失败。`max_chars` 是完整 JSON 的 Unicode 字符预算，不是精确 token 数。
 
-备份及恢复目标必须为新目录。`exports/current.json` 指向完整阅读快照；备份包含数据库及引用对象，不含配对信息。阅读快照是派生数据：本机组件在资料停止变化 30 秒后刷新，持续写入时最多每 10 分钟刷新一次；重启后若 current.json 已对应当前 generation 则不重复导出。每次导出（含手动 `export`）只保留 current.json 指向的快照与最近共 3 份，并清理超过 1 小时的未完成 staging 快照；结果的 `pruned_snapshots` 为本次删除数。直接读文件时以 status 的 `readable_snapshot.behind` 判断是否落后。其他管理命令有 `sync pause --job ID`、`sync resume --job ID`、`reindex`、`note delete ID` 和 `note restore ID`；删除是软删除。
+备份及恢复目标必须为新目录。`exports/current.json` 指向完整阅读快照；备份包含数据库及引用对象，不含配对信息。阅读快照是派生数据：本机组件在资料停止变化 30 秒后刷新，持续写入时最多每 10 分钟刷新一次；重启后若 current.json 已对应当前 generation 则不重复导出。每次导出（含手动 `export`）只保留 current.json 指向的快照与最近共 3 份，并清理超过 1 小时的未完成 staging 快照；结果的 `pruned_snapshots` 为本次删除数。直接读文件时以 status 的 `readable_snapshot.behind` 判断是否落后。其他管理命令有 `sync pause --job ID`、`sync resume --job ID`、`sync abandon --job ID`（把未结束的列表扫描记为 interrupted）、`aliases list|add|remove`、`reindex`、`note delete ID` 和 `note restore ID`；删除是软删除。
 
 ## 独立图片获取
 
