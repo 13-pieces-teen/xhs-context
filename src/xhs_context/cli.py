@@ -35,6 +35,10 @@ def parser():
     search.add_argument("--cursor")
     read = commands.add_parser("read", parents=[common])
     read.add_argument("--input", required=True)
+    aliases = commands.add_parser("aliases", parents=[common],
+                                  help="List or edit equivalent names used by search (library-wide)")
+    aliases.add_argument("action", choices=["list", "add", "remove"])
+    aliases.add_argument("names", nargs="*", help="add: two or more equivalent names; remove: one custom name")
     images = commands.add_parser('images', parents=[common], help='Acquire images independently; search/read never fetch images')
     image_sub = images.add_subparsers(dest='images_action', required=True)
     plan = image_sub.add_parser('plan', parents=[common], help='Inspect local image gaps and body references; never acquire')
@@ -157,6 +161,17 @@ def dispatch(args):
     if args.command == "read":
         from .core import read
         return read(store, read_input(args.input))
+    if args.command == "aliases":
+        from .aliases import add_aliases, list_aliases, remove_alias
+        if args.action == "list":
+            if args.names:
+                raise XhsError("INVALID_ARGUMENT", "aliases list takes no names", exit_code=2)
+            return envelope(list_aliases(store))
+        if args.action == "add":
+            return envelope(add_aliases(store, args.names))
+        if len(args.names) != 1:
+            raise XhsError("INVALID_ARGUMENT", "aliases remove takes exactly one name", exit_code=2)
+        return envelope(remove_alias(store, args.names[0]))
     if args.command == 'images':
         return dispatch_images(store, args)
     if args.command == "ingest":

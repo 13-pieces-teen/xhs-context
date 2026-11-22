@@ -61,7 +61,7 @@
 
 ## 检索接口
 
-工作区的响应信封仍为 `schema_version=2`。SQLite 存储版本仍为 1，初始化时幂等补建 image_jobs / image_items 两张表，已有原文、修订、证据 ID、正文队列和停止保护保留，索引无需重建。尚未发布的搜索策略为 `lexical-body-v5`，读取策略为 `grouped-evidence-v4`；旧游标返回 `CURSOR_STALE`，客户端应重新发起原请求。
+工作区的响应信封仍为 `schema_version=2`。SQLite 存储版本仍为 1，初始化时幂等补建 image_jobs / image_items 两张表，已有原文、修订、证据 ID、正文队列和停止保护保留，索引无需重建。尚未发布的搜索策略为 `lexical-body-v6`，读取策略为 `grouped-evidence-v4`；旧游标返回 `CURSOR_STALE`，客户端应重新发起原请求。
 
 search JSON 字段：
 
@@ -75,6 +75,12 @@ search JSON 字段：
 | max_chars | 512–200000，完整 JSON 的字符预算 |
 
 候选由 FTS 和字面通道取得，每个展开查询的候选通道最多取 1000 条；触及上限返回 `CANDIDATES_LIMITED`，不能声称穷尽。排序区分标题、正文、OCR 与标签，实质词命中优先于靠标签凑齐条件；等价查询只取组内最强分数，避免重复写 Madrid/马德里抬高排名。CLI 仅处理等价名称，不把 infra 自动映射为容器、网络等关联主题。进一步查哪些主题由 Agent 根据任务和已读原文决定。
+
+**等价名称。** 内置组只有 Madrid/马德里、Kubernetes/k8s、infra/基础设施、AI Infra/AI 基础设施。资料库可用 `aliases add 名称 名称…` 新建或扩展组、`aliases remove 名称` 删除自定义名称、`aliases list` 查看全部组及来源（builtin / extended / custom）；内置名称不可删除，一组最多 12 个名称，不会合并两个内置组。自定义组保存在数据库 meta 中，随备份恢复；修改会递增 generation，使原搜索游标失效。`effective_queries` 列出本次实际展开的写法，用户自己的写法排在组内第一位。这是资料库管理操作，查询任务不应自行增删。
+
+**v6 部分命中层（仅 `match=terms`）。** 每个查询仍先要求全部关键词出现在同一篇笔记（完整命中），其排序与 v5 相同。若某篇笔记对至少一个多词查询只在标题、正文或 OCR 中命中了不少于一半的词（不能只靠单个汉字或标签），它进入第二层，排在所有完整命中之后，并附 `partial_match: [{query, missing_terms}]` 说明缺哪些词。`matched_count` 仍只计完整命中，`partial_term_matches` 计第二层数量；分页游标按“完整命中 → 部分命中”的顺序连续翻页。正文过滤计数 `unavailable_body_matches` / `noncontent_body_matches` 只统计完整命中。部分命中的候选通道另有 1000 条上限，触及时返回警告 `PARTIAL_CANDIDATES_LIMITED`，但不置 `partial=true`，因为完整命中不受影响。部分命中只是线索：缺少的词可能正是问题的必要条件，需要回读确认或改用 `required_terms`。`match=phrase` 不产生部分命中。
+
+查询词两端的标点不再参与匹配：`learn k8s.` 中的 `k8s.` 视为 `k8s`，`“马德里”`、`（C#）` 的字面通道会去掉引号和括号；`C++`、`C#`、`node.js` 等标识中的符号保留。
 
 `data.items` 返回固定版本、`matched_queries`、`matched_fields` 与最多两段原文摘录；长段围绕命中截取，不以开头固定截断替代。`snippets[].location` 的正文 start/end 对应原文字符位置，`excerpt_only` 表示不是整个证据块，`matched` 区分命中片段与无直接段落命中时的介绍。原始正文不因标签降权或摘录而改写。
 

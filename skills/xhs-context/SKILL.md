@@ -29,6 +29,10 @@ xhs-context search --query "AI Infra" --query "Agent 权限" --query "LLM 响应
 
 `--query` 最多重复四次，各查询的候选合并；`--require` 是所有候选都必须满足的条件，支持等价名称，标签本身不能满足该条件。不要把整个自然语言问题直接当成关键词串，也不要未经用户或原文支持就加入关联领域。
 
+等价名称只覆盖内置的少数组（Madrid/马德里、Kubernetes/k8s、infra/基础设施等）和用户为本库添加的组，`aliases list` 可查看；`effective_queries` 显示本次实际展开的写法。其他中英、简称写法仍需你自己写成多个 `--query`。增删等价名称会修改资料库，只在用户要求时执行 `aliases add` / `aliases remove`。
+
+默认 `terms` 模式下，笔记含有某个查询的全部关键词才算完整命中；只含其中一半以上关键词的笔记排在所有完整命中之后，带 `partial_match`（列出 `missing_terms`）。`matched_count` 只计完整命中，`partial_term_matches` 是部分命中数。部分命中只是线索，缺的词可能正是必要条件；回读确认，或把必要的词改为 `--require`。
+
 `search` 返回 `next_cursor` 时，可用它继续查看原查询的下一页候选；续页 JSON 仅传 `cursor` 和可选 `max_chars`，或使用 `search --cursor CURSOR --max-chars 6000`。
 
 默认 `--match terms` 允许关键词分散在同篇不同段落。查证技术名词、店名，或发现拆词误召回时，可用 `--match phrase`（JSON 为 `"match":"phrase"`），例如 `search --query "数据并行" --query "张量并行" --match phrase`。每个查询须完整出现在同一字段的一行中，忽略大小写、全半角与横向空白差异，沿用等价别名；标签不能单独满足。它收紧字面匹配，不判断相关性，可能漏掉改写表达，不能用短语零命中断言没有相关内容。

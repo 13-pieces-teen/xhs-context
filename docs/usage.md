@@ -36,9 +36,17 @@
 | `--limit` | 每页笔记数，1–50；不是全量结果上限 |
 | `--max-chars` | 整个 JSON 响应的字符预算，512–200000；不是 token 数 |
 
-默认 `content=body` 会在排序、分页前排除缺失正文、空白正文和只有标签或装饰符号的内容。短正文和“详细步骤见图”仍可返回；这项过滤不判断文章质量。默认 `match=terms` 允许关键词分散在同篇的不同段落；`phrase` 更严格，也可能漏掉改写表达。
+默认 `content=body` 会在排序、分页前排除缺失正文、空白正文和只有标签或装饰符号的内容。短正文和“详细步骤见图”仍可返回；这项过滤不判断文章质量。默认 `match=terms` 允许关键词分散在同篇的不同段落；只含一半以上关键词的笔记排在所有完整命中之后，带 `partial_match` 列出缺少的词，`matched_count` 只计完整命中。`phrase` 更严格，不返回部分命中，也可能漏掉改写表达。
 
-CLI 处理字面匹配和少量等价名称，如 Madrid / 马德里、Kubernetes / k8s。是否把“infra”进一步拆成容器、网络或可观测性，由 Agent 根据问题和原文决定。
+CLI 处理字面匹配和少量内置等价名称，如 Madrid / 马德里、Kubernetes / k8s。可以为本库补充等价名称，修改后已有搜索游标失效：
+
+```powershell
+.\scripts\xhs.ps1 aliases list
+.\scripts\xhs.ps1 aliases add Tokyo 东京
+.\scripts\xhs.ps1 aliases remove 东京
+```
+
+是否把“infra”进一步拆成容器、网络或可观测性，由 Agent 根据问题和原文决定，不应写成等价名称。
 
 复杂请求可保存为 UTF-8 JSON 文件，例如 `search.json`：
 
