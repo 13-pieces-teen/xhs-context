@@ -118,7 +118,7 @@ read.json 示例，ID 取自搜索结果：
 
 `evidence` 返回指定块和邻近上下文，`full` 按顺序读取，`asset` 用 `asset_ids` 返回本机原图路径。复杂请求使用 UTF-8 JSON 文件或 `--input -`。stdout 为单个 JSON，stderr 为诊断；退出码 0 成功、2 输入错误、3 部分成功、4 状态或对象问题、5 运行失败。`max_chars` 是完整 JSON 的 Unicode 字符预算，不是精确 token 数。
 
-备份及恢复目标必须为新目录。`exports/current.json` 指向完整阅读快照；备份包含数据库及引用对象，不含配对信息。其他管理命令有 `sync pause --job ID`、`sync resume --job ID`、`reindex`、`note delete ID` 和 `note restore ID`；删除是软删除。
+备份及恢复目标必须为新目录。`exports/current.json` 指向完整阅读快照；备份包含数据库及引用对象，不含配对信息。阅读快照是派生数据：本机组件在资料停止变化 30 秒后刷新，持续写入时最多每 10 分钟刷新一次；重启后若 current.json 已对应当前 generation 则不重复导出。每次导出（含手动 `export`）只保留 current.json 指向的快照与最近共 3 份，并清理超过 1 小时的未完成 staging 快照；结果的 `pruned_snapshots` 为本次删除数。直接读文件时以 status 的 `readable_snapshot.behind` 判断是否落后。其他管理命令有 `sync pause --job ID`、`sync resume --job ID`、`reindex`、`note delete ID` 和 `note restore ID`；删除是软删除。
 
 ## 独立图片获取
 

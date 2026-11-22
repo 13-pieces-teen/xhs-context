@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .common import XhsError, envelope
 from .core import status
-from .exports import export_snapshot
+from .exports import ExportScheduler
 from .jobs import create_job, finish_scan, receive_batch, set_job_state
 from .worker import Worker, sync_lock
 from .browser_import import enable_browser, next_page, accept_page
@@ -80,7 +80,7 @@ class SyncSession:
         return self
 
     def run(self):
-        last_export = -1
+        exports = ExportScheduler(self.store)
         images_first = False
         while not self.stop.is_set():
             try:
@@ -88,11 +88,7 @@ class SyncSession:
                 worked = first.once() or second.once()
                 images_first = not images_first
                 if not worked:
-                    with self.store.read() as db:
-                        generation = self.store.generation(db)
-                    if generation != last_export:
-                        export_snapshot(self.store)
-                        last_export = generation
+                    exports.idle()
                 self.stop.wait(self.interval if worked else 1)
             except Exception as exc:
                 print(f"sync worker error: {type(exc).__name__}", file=sys.stderr)

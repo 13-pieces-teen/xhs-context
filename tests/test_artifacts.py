@@ -6,7 +6,7 @@ from PIL import Image
 from conftest import note
 from xhs_context.common import XhsError
 from xhs_context.core import read, status
-from xhs_context.exports import export_snapshot, backup, restore
+from xhs_context.exports import ExportScheduler, export_snapshot, backup, prune_snapshots, restore
 from xhs_context.processing import store_image, finish_content
 from xhs_context.storage import Store
 
@@ -24,6 +24,55 @@ def test_snapshot_has_one_revision_and_explicit_lag(store):
     manifest = json.loads((store.root / "exports" / snapshot["snapshot_id"] / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["notes"] == [{"note_id": n["note_id"], "revision_id": old_revision,
                                   "path": f"notes/{n['note_id']}.md"}]
+
+
+def test_exports_keep_current_and_recent_snapshots(store):
+    store.publish(note())
+    created = [export_snapshot(store)["snapshot_id"] for _ in range(5)]
+    remaining = sorted(p.name for p in (store.root / "exports").glob("snapshot-*"))
+    assert remaining == sorted(created[-3:])
+    pointer = json.loads((store.root / "exports/current.json").read_text(encoding="utf-8"))
+    assert pointer["snapshot_id"] == created[-1]
+    # The snapshot named by current.json survives even if a newer orphan exists.
+    orphan = store.root / "exports" / "snapshot-zzzzorphan"
+    orphan.mkdir()
+    (orphan / "manifest.json").write_text(json.dumps({"created_at": "9999-01-01T00:00:00+00:00"}), encoding="utf-8")
+    prune_snapshots(store, keep=1)
+    assert (store.root / "exports" / created[-1]).is_dir() and not orphan.exists()
+
+
+def test_export_scheduler_waits_for_quiet_and_bounds_delay(store):
+    clock = [0.0]
+    calls = []
+
+    def export(target):
+        calls.append(clock[0])
+        with target.read() as db:
+            return {"generation": target.generation(db)}
+
+    scheduler = ExportScheduler(store, quiet=30, max_delay=100, clock=lambda: clock[0], export=export)
+    store.publish(note())
+    assert not scheduler.idle()
+    clock[0] = 29
+    assert not scheduler.idle()
+    clock[0] = 31
+    assert scheduler.idle() and calls == [31]
+    clock[0] = 40
+    assert not scheduler.idle()  # Unchanged generation is never re-exported.
+    # Continuous changes still refresh the snapshot after max_delay.
+    for second in range(41, 160, 10):
+        clock[0] = second
+        store.publish(note(body=f"正文 {second}"))
+        scheduler.idle()
+    assert calls == [31, 141]
+
+
+def test_export_scheduler_reuses_existing_snapshot_after_restart(store):
+    store.publish(note())
+    export_snapshot(store)
+    calls = []
+    scheduler = ExportScheduler(store, quiet=0, clock=lambda: 0.0, export=lambda s: calls.append(s))
+    assert not scheduler.idle() and calls == []
 
 
 def test_backup_restore_keeps_media_and_old_citations(store, tmp_path):

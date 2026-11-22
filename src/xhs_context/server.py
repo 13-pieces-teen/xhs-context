@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 from .common import XhsError, atomic_json, dumps, envelope, error_envelope
-from .exports import export_snapshot
+from .exports import ExportScheduler
 from .sync_service import dispatch_sync
 from .worker import Worker, sync_lock
 
@@ -112,16 +112,12 @@ def serve(store, port=4319, ocr=True, interval=2):
         worker = Worker(store, ocr=ocr, stop_event=stop)
         worker.recover()
         def run():
-            last_export = -1
+            exports = ExportScheduler(store)
             while not stop.is_set():
                 try:
                     worked = worker.once()
                     if not worked:
-                        with store.read() as db:
-                            generation = store.generation(db)
-                        if generation != last_export:
-                            export_snapshot(store)
-                            last_export = generation
+                        exports.idle()
                     stop.wait(interval if worked else 1)
                 except Exception as exc:
                     print(f"sync worker error: {type(exc).__name__}", file=sys.stderr)

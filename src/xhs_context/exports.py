@@ -4,11 +4,90 @@ import json
 import os
 import shutil
 import sqlite3
+import time
 import uuid
 from pathlib import Path, PurePosixPath
 
 from .common import XhsError, atomic_json, digest, dumps, now
 from .storage import Store
+
+KEEP_SNAPSHOTS = 3
+STALE_STAGING_SECONDS = 3600
+
+
+def _snapshot_time(path):
+    try:
+        manifest = path / "manifest.json"
+        return json.loads(manifest.read_text(encoding="utf-8"))["created_at"], manifest.stat().st_mtime_ns
+    except (OSError, ValueError, KeyError, TypeError):
+        # Incomplete or damaged snapshots sort first, so they are removed first.
+        return "", 0
+
+
+def prune_snapshots(store, keep=KEEP_SNAPSHOTS):
+    """Keep the snapshot named by current.json plus the newest others; snapshots are derived data."""
+    exports = store.root / "exports"
+    current = None
+    try:
+        current = json.loads((exports / "current.json").read_text(encoding="utf-8")).get("snapshot_id")
+    except (OSError, ValueError, AttributeError):
+        pass
+    snapshots = sorted((p for p in exports.glob("snapshot-*") if p.is_dir()),
+                       key=lambda p: (_snapshot_time(p), p.name), reverse=True)
+    retained = {current} if current else set()
+    for path in snapshots:
+        if len(retained) >= keep:
+            break
+        retained.add(path.name)
+    removed = 0
+    for path in snapshots:
+        if path.name in retained:
+            continue
+        # A reader may hold a file open on Windows; a remainder is retried next time.
+        shutil.rmtree(path, ignore_errors=True)
+        removed += not path.exists()
+    cutoff = time.time() - STALE_STAGING_SECONDS
+    for path in (store.root / "staging").glob("snapshot-*"):
+        try:
+            if path.is_dir() and path.stat().st_mtime < cutoff:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+    return removed
+
+
+class ExportScheduler:
+    """Refresh the readable snapshot after changes settle, not after every published note."""
+
+    def __init__(self, store, *, quiet=30.0, max_delay=600.0, clock=time.monotonic, export=None):
+        self.store, self.quiet, self.max_delay, self.clock = store, quiet, max_delay, clock
+        self.export = export or export_snapshot
+        self.exported = None
+        try:
+            pointer = json.loads((store.root / "exports/current.json").read_text(encoding="utf-8"))
+            if (store.root / "exports" / pointer["snapshot_id"] / "manifest.json").is_file():
+                self.exported = int(pointer["generation"])
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        self.seen = self.changed_at = self.pending_since = None
+
+    def idle(self):
+        with self.store.read() as db:
+            generation = self.store.generation(db)
+        moment = self.clock()
+        if generation != self.seen:
+            self.seen, self.changed_at = generation, moment
+        if generation == self.exported:
+            self.pending_since = None
+            return False
+        if self.pending_since is None:
+            self.pending_since = moment
+        if moment - self.changed_at < self.quiet and moment - self.pending_since < self.max_delay:
+            return False
+        result = self.export(self.store)
+        self.exported = result.get("generation", generation) if isinstance(result, dict) else generation
+        self.pending_since = None
+        return True
 
 
 def export_snapshot(store):
@@ -58,7 +137,7 @@ def export_snapshot(store):
     pointer = {"snapshot_id": snapshot_id, "generation": manifest["generation"],
                "created_at": manifest["created_at"], "path": str(final), "index": str(final / "index.md")}
     atomic_json(store.root / "exports/current.json", pointer)
-    return dict(pointer, notes=len(manifest["notes"]))
+    return dict(pointer, notes=len(manifest["notes"]), pruned_snapshots=prune_snapshots(store))
 
 
 def backup(store, destination):
