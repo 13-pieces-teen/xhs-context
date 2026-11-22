@@ -64,6 +64,18 @@ def test_alias_validation_and_merging(store):
     assert not add_aliases(store, ["纽约", "NYC"])["changed"]
 
 
+def test_removing_the_first_name_keeps_the_rest_of_a_custom_group(store):
+    for number, text in enumerate(["Tokyo 拉面", "东京 拉面", "TYO 拉面"], 1):
+        store.publish(note(number, text, title="拉面"))
+    add_aliases(store, ["Tokyo", "东京", "TYO"])
+    remove_alias(store, "Tokyo")
+    result = search(store, {"queries": ["东京"]})
+    assert result["data"]["effective_queries"] == ["东京", "tyo"]
+    assert set(ids(result)) == {f"{2:024x}", f"{3:024x}"}
+    add_aliases(store, ["TYO", "Edo"])
+    assert [g["names"] for g in list_aliases(store)["groups"] if g["source"] == "custom"] == [["东京", "tyo", "edo"]]
+
+
 def test_cli_aliases(store, capsys):
     library = str(store.root)
     assert main(["--library", library, "aliases", "add", "Tokyo", "东京"]) == 0

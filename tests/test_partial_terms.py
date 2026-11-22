@@ -53,6 +53,15 @@ def test_partial_tier_ignores_tags_single_characters_and_phrase_mode(store):
     assert phrase["data"]["items"] == [] and phrase["data"]["partial_term_matches"] == 0
 
 
+def test_or_only_candidates_never_join_the_full_match_tier(store):
+    # Substring hits across a word boundary were never full matches before v6.
+    store.publish(note(1, "南京市长江大桥上有人讲话。", title="大桥"))
+    store.publish(note(2, "市长发表讲话。", title="新闻"))
+    result = search(store, {"queries": ["市长讲话"]})
+    assert result["data"]["matched_count"] == 1
+    assert ids(result) == [f"{2:024x}"]
+
+
 def test_cursor_pages_continue_from_full_into_partial_tier(store):
     for number in range(1, 4):
         store.publish(note(number, f"磁盘延迟排查 {number}。", title="完整"))

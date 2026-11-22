@@ -170,8 +170,11 @@ def search(store, request):
             values = document_fields(row, payload)
             if not required_match(values, base["required_terms"], aliases):
                 continue
-            score, matched, matched_fields = rank_document(values, groups, {
+            # Only the original AND/literal candidates may be full matches; OR-only
+            # candidates join the partial tier, so full-match results stay as before.
+            score, matched, matched_fields = (rank_document(values, groups, {
                 q: ranks[note_id] for q, ranks in fts_ranks.items() if note_id in ranks}, base["match"])
+                if note_id in candidates else (0, [], []))
             tier = 0
             if not score and base["match"] == "terms":
                 score, matched, matched_fields, missing = partial_rank(values, groups)

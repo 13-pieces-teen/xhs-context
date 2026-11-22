@@ -18,7 +18,9 @@ def custom_aliases(db):
 
 def effective_aliases(db):
     merged = {canonical: tuple(names) for canonical, names in ALIASES.items()}
-    merged.update({canonical: tuple(names) for canonical, names in custom_aliases(db).items()})
+    for canonical, names in custom_aliases(db).items():
+        # Defensive: a group key that is not one of its names would collapse the group.
+        merged[canonical if canonical in names or canonical in ALIASES else names[0]] = tuple(names)
     return merged
 
 
@@ -96,9 +98,9 @@ def remove_alias(store, name):
         if value in ALIASES.get(canonical, ()):
             raise XhsError("CONFLICT", "Built-in equivalent names cannot be removed", exit_code=2)
         group = [n for n in custom[canonical] if n != value]
-        if len(group) < 2 or tuple(group) == ALIASES.get(canonical):
-            custom.pop(canonical)
-        else:
-            custom[canonical] = group
+        custom.pop(canonical)
+        if len(group) >= 2 and tuple(group) != ALIASES.get(canonical):
+            # The key must remain one of the group's names; query_groups rewrites queries to it.
+            custom[canonical if canonical in group else group[0]] = group
         _save(store, db, custom)
         return dict(_describe(db), changed=True)
