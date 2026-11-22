@@ -175,7 +175,7 @@ def search(store, request):
             blocks = [dict(b) for b in db.execute(
                 "SELECT block_id,kind,text,location,ordinal FROM evidence_blocks WHERE revision_id=?",
                 (row["current_revision"],))]
-            snippets = excerpts(blocks, matches[note_id], base["required_terms"])
+            snippets = excerpts(blocks, matches[note_id], base["required_terms"], title=row['title'], match=base['match'])
             units.append({"note_id": note_id, "revision_id": row["current_revision"], "title": row["title"],
                           "source_url": payload.get("canonical_url", row["source_url"].split("?")[0]),
                           "source_kind": payload.get("source_kind", "xiaohongshu"),
@@ -205,12 +205,12 @@ def search(store, request):
 
 
 def validate_read(request):
-    fields(request, {"items", "mode", "max_chars", "cursor"})
+    fields(request, {"items", "mode", "context", "max_chars", "cursor"})
     if request.get("cursor"):
         cursor = decode_cursor(request["cursor"], "read")
         if cursor.get("read_version") != READ_VERSION:
             raise XhsError("CURSOR_STALE", "Read format changed; repeat the original read")
-        if "items" in request or "mode" in request:
+        if "items" in request or "mode" in request or "context" in request:
             raise XhsError("INVALID_ARGUMENT", "Use cursor with max_chars only", exit_code=2)
         base = validate_read(cursor.get("request", {}))[0]
         integer(cursor.get("offset"), "cursor offset", 0, 1000000)
@@ -236,7 +236,12 @@ def validate_read(request):
     mode = request.get("mode", "evidence")
     if mode not in {"evidence", "full", "asset"}:
         raise XhsError("INVALID_ARGUMENT", "mode must be evidence, full or asset", exit_code=2)
-    return {"items": items, "mode": mode}, None, request.get("max_chars", 12000)
+    if 'context' in request and mode != 'evidence':
+        raise XhsError('INVALID_ARGUMENT', 'context is only supported in evidence mode', exit_code=2)
+    base = {"items": items, "mode": mode}
+    if mode == 'evidence':
+        base['context'] = integer(request.get('context', 1), 'context', 0, 4)
+    return base, None, request.get("max_chars", 12000)
 
 
 def read(store, request):
@@ -307,7 +312,8 @@ def read(store, request):
             if base["mode"] == "evidence":
                 anchors = [i for i, b in enumerate(blocks) if b["block_id"] in wanted] if wanted else list(range(min(3, len(blocks))))
                 for i in anchors:
-                    indices.update(range(max(0, i - 1), min(len(blocks), i + 2)))
+                    radius = base['context']
+                    indices.update(range(max(0, i - radius), min(len(blocks), i + radius + 1)))
             for i in sorted(indices):
                 block = blocks[i]
                 block["location"] = json.loads(block["location"])

@@ -61,7 +61,7 @@
 
 ## 检索接口
 
-0.5.0 的响应信封仍为 `schema_version=2`。SQLite 存储版本仍为 1，初始化时幂等补建 image_jobs / image_items 两张表，已有原文、修订、证据 ID、正文队列和停止保护保留，索引无需重建。搜索策略为 `lexical-body-v4`，读取策略为 `grouped-evidence-v3`；旧游标返回 `CURSOR_STALE`，客户端应重新发起原请求。
+工作区的响应信封仍为 `schema_version=2`。SQLite 存储版本仍为 1，初始化时幂等补建 image_jobs / image_items 两张表，已有原文、修订、证据 ID、正文队列和停止保护保留，索引无需重建。尚未发布的搜索策略为 `lexical-body-v5`，读取策略为 `grouped-evidence-v4`；旧游标返回 `CURSOR_STALE`，客户端应重新发起原请求。
 
 search JSON 字段：
 
@@ -78,15 +78,17 @@ search JSON 字段：
 
 `data.items` 返回固定版本、`matched_queries`、`matched_fields` 与最多两段原文摘录；长段围绕命中截取，不以开头固定截断替代。`snippets[].location` 的正文 start/end 对应原文字符位置，`excerpt_only` 表示不是整个证据块，`matched` 区分命中片段与无直接段落命中时的介绍。原始正文不因标签降权或摘录而改写。
 
+v5 保持笔记候选与排序规则；摘录在词匹配分数相同时，以完整短语命中、重复标题与句末标点作弱排序信号。编号后的句点不算句末。纯问题、短句及无标点正文仍可返回；这些信号不等于语义相关性或答案质量。
+
 `unavailable_body_matches` 是本次已枚举候选中正文未取得、未经验证或为空白的匹配数；`noncontent_body_matches` 是另一个互斥计数，表示正文已保存且非空，但去掉标签后没有文字或数字（包括纯标签、不可见字符及纯装饰符号）。默认模式在排序分页前将两类候选从 items 和 matched_count 排除，避免它们占用结果页。`content=all` 保留两类线索，并分别附上 `body_filter_reason=unavailable` 或 `no_text`；正常正文不附该字段。
 
 过滤只判断是否有标签之外的文本，不设最短字数，也不因“见图”“视频”等词排除整篇；它不声称判断教程完整性或语义质量。原文、修订、固定版本读取和索引不变；搜索摘录也跳过纯标签或装饰段落。两个匹配计数都不是整库待处理数；`coverage` 描述范围内的保存状态，`body_available` 仍包含纯标签正文，不是有效文章数或召回率。必要条件约束整篇笔记，同篇出现多个城市时仍需 Agent 逐段归属。
 
-read JSON：items（1–10 篇，每项指定 note_id/revision_id，可指定 block_ids 或 asset_ids）、mode（evidence/full/asset）、max_chars，或者 cursor 与 max_chars。同一请求不重复提交相同的 note_id/revision_id。
+read JSON：items（1–10 篇，每项指定 note_id/revision_id，可指定 block_ids 或 asset_ids）、mode（evidence/full/asset）、context、max_chars，或者 cursor 与 max_chars。同一请求不重复提交相同的 note_id/revision_id。context 仅适用于 evidence，必须为 0–4 的整数（布尔值无效），默认 1；指定每个锚点前后各返回的块数。相邻窗口合并去重并保持原文顺序，参数随游标保留，续页不能覆盖。
 
 read 的 `data.items` **按笔记聚合**。每篇每页共享 note_id、revision_id、title、source_url、来源类型、内容范围和 gaps；evidence/full 模式返回 `blocks[]`（block_id、kind、原文 text、location），asset 模式返回 `assets[]`。不再为每段重复笔记元数据，不再返回单个 `block` / `asset` 或冗余 ordinal。数组保持原文顺序，证据 ID、内容和原始位置保留。
 
-`continued` 表示本篇承接上一页，`has_more` 表示本篇的本次请求内容仍在下一页；它们不代表整篇或整夹已完整归档。`data.next_cursor` 指向本次请求的剩余结果，`data.errors` 保留逐项错误。`mode=evidence` 未指定块时从开头取少量上下文，指定块时包含每个锚点的相邻块；全文核对使用 `full`。
+`continued` 表示本篇承接上一页，`has_more` 表示本篇的本次请求内容仍在下一页；它们不代表整篇或整夹已完整归档。`data.next_cursor` 指向本次请求的剩余结果，`data.errors` 保留逐项错误。`mode=evidence` 未指定块时以开头最多三个块为锚点，指定块时包含每个锚点及 context 范围的相邻块；全文核对使用 `full`。
 
 续页只发送 cursor 和可选 max_chars，不能混入新查询条件。搜索游标绑定请求、检索策略版本和 index generation。游标校验与所有检索读取位于同一读事务；读取游标绑定固定笔记版本和返回格式版本。输出预算包含整个 JSON，不会输出被切断的 JSON；如果单个证据单元不能放入预算，返回 OUTPUT_BUDGET_TOO_SMALL。
 
@@ -119,6 +121,12 @@ read.json 示例，ID 取自搜索结果：
 备份及恢复目标必须为新目录。`exports/current.json` 指向完整阅读快照；备份包含数据库及引用对象，不含配对信息。其他管理命令有 `sync pause --job ID`、`sync resume --job ID`、`reindex`、`note delete ID` 和 `note restore ID`；删除是软删除。
 
 ## 独立图片获取
+
+`images plan` 是独立的只读检查，不调用采集 worker、不建任务、不修改停止保护，也不访问网络。指定 `--note ID`（可重复，最多 100 个）或 `--collection ID`，也可用 `--input` JSON；三种输入不能混用。JSON 为 `note_ids` / `collection_id` 二选一，可传 `limit`（1–50，默认 8）与 `max_chars`（默认 6000）。续页仅传 `cursor` 和可选 `max_chars`。游标绑定 `local-image-plan-v1`、资料库 generation 与本机文件存在状态；变化时返回 `CURSOR_STALE`。
+
+返回 `data.items` 中的固定笔记版本、来源、`media`、`body_image_hints`、`fetch_candidate`、`priority` 和已有 `gaps`。media 区分 deferred / unknown / partial / available / none_expected，分别记录预期数、已列出数、本机存在数、缺失路径、缩略图和未经确认的文件。`local_file_check=existence_only` 表示仅检查存在性，不校验图片哈希或解码内容。正文提示带原文块 ID 和字符位置，最多两条；否定句和问句保守地归为一般图片提及。提示未命中不表示图片没有价值。
+
+存在图片缺口且正文明确指向图片内容的候选标为 `explicit_body_reference`，其次为一般 `image_gap`，已解决者为 `already_resolved`。这是补图检查顺序，不承诺图片包含所需答案。`notes` / `fetch_candidates` / `explicit_reference_candidates` 是本次完整范围的计数；`access_restriction` 与 `acquisition_blocked` 表达当前停止保护。部分笔记不存在时保留其他成功条目和错误。plan 不返回下载链接；是否实际补图仍由独立 fetch 命令决定。
 
 `images fetch --note ID` 支持重复指定笔记；`--collection ID` 处理本地该收藏夹现有成员，不重新枚举网页收藏。`--input request.json` 接收与 POST /v1/image-jobs 相同的请求。三类输入不能混用。`--background` 仅排队；默认优先交给已运行本机组件，未被占用时在前台处理。`images process [--job ID]` 可显式运行队列，`images status [--job ID]` 查看进度；pause / resume 需指定 job，resume 不会启动新后台进程。
 

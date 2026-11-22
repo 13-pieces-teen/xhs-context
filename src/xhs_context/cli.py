@@ -37,6 +37,13 @@ def parser():
     read.add_argument("--input", required=True)
     images = commands.add_parser('images', parents=[common], help='Acquire images independently; search/read never fetch images')
     image_sub = images.add_subparsers(dest='images_action', required=True)
+    plan = image_sub.add_parser('plan', parents=[common], help='Inspect local image gaps and body references; never acquire')
+    plan.add_argument('--note', action='append', dest='note_ids')
+    plan.add_argument('--collection', dest='collection_id')
+    plan.add_argument('--limit', type=int)
+    plan.add_argument('--max-chars', type=int)
+    plan.add_argument('--cursor')
+    plan.add_argument('--input')
     fetch = image_sub.add_parser('fetch', parents=[common])
     fetch.add_argument('--note', action='append', dest='note_ids')
     fetch.add_argument('--collection', dest='collection_id')
@@ -194,6 +201,16 @@ def dispatch(args):
 
 
 def dispatch_images(store, args):
+    if args.images_action == 'plan':
+        from .images import image_plan
+        shortcuts = ('note_ids', 'collection_id', 'limit', 'max_chars', 'cursor')
+        if args.input:
+            if any(getattr(args, key) is not None for key in shortcuts):
+                raise XhsError('INVALID_ARGUMENT', 'Do not mix --input with image plan shortcut flags', exit_code=2)
+            request = read_input(args.input)
+        else:
+            request = {key: getattr(args, key) for key in shortcuts if getattr(args, key) is not None}
+        return image_plan(store, request)
     from .image_jobs import create_image_job, image_report, image_reports, set_image_state
     from .images import ImageWorker
     from .worker import sync_lock

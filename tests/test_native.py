@@ -61,3 +61,40 @@ def test_setup_default_is_shared_by_cli_and_native_host(tmp_path, monkeypatch):
 def test_extension_identity_is_stable_across_install_paths():
     root = Path(__file__).resolve().parents[1]
     assert extension_id(root / "browser-extension") == "mehmgdlepmchnakhfmcbhdcgciphljpb"
+
+
+@pytest.mark.parametrize("selection", ["argument", "environment", "default"])
+def test_first_setup_respects_selected_library_before_legacy_fallback(tmp_path, monkeypatch, selection):
+    from types import SimpleNamespace
+    from xhs_context import setup
+    from xhs_context.storage import Store
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "user-config"))
+    monkeypatch.delenv("XHS_CONTEXT_HOME", raising=False)
+    extension = tmp_path / "checkout/browser-extension"
+    extension.mkdir(parents=True)
+    manifest = Path(__file__).resolve().parents[1] / "browser-extension/manifest.json"
+    (extension / "manifest.json").write_bytes(manifest.read_bytes())
+    legacy = extension.parent / "var/library"
+    Store(legacy).initialize()
+    requested = tmp_path / "explicit-new-library"
+    assert not requested.exists() and not config_path().exists()
+
+    # Exercise setup and real library initialization without changing HKCU.
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "xhs-context-native.exe").touch()
+    monkeypatch.setattr(setup, "sys", SimpleNamespace(executable=str(runtime / "python.exe")))
+    monkeypatch.setattr(setup, "register_host", lambda _: [])
+    if selection == "environment":
+        monkeypatch.setenv("XHS_CONTEXT_HOME", str(requested))
+    result = setup.install_host(extension, requested if selection == "argument" else None)
+
+    expected = legacy if selection == "default" else requested
+    assert result["installed"] and result["library"] == str(expected.resolve())
+    assert json.loads(config_path().read_text(encoding="utf-8"))["library"] == str(expected.resolve())
+    assert (expected / "library.sqlite").is_file()
+    assert (legacy / "library.sqlite").is_file()
+    if selection == "default":
+        assert not requested.exists()
+        assert not (config_path().parent / "library").exists()

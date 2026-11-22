@@ -49,10 +49,12 @@ def install_host(extension_dir, selected_library=None):
     executable = Path(sys.executable).parent / "xhs-context-native.exe"
     if not executable.is_file():
         raise XhsError("HOST_NOT_INSTALLED", "Run scripts/install.ps1 to install the native entry point")
+    library_was_selected = selected_library is not None or bool(os.environ.get("XHS_CONTEXT_HOME"))
     selected_library = library_path(selected_library)
-    # Preserve the first prototype's library if no default has been configured.
+    # Preserve the first prototype's library only when no library was selected.
     legacy = extension_dir.parent / "var/library"
-    if not config_path().exists() and not selected_library.exists() and (legacy / "library.sqlite").is_file():
+    if (not library_was_selected and not config_path().exists() and not selected_library.exists()
+            and (legacy / "library.sqlite").is_file()):
         selected_library = legacy.resolve()
     manifest_path = config_path().parent / "native-host.json"
     value = {"name": HOST_NAME, "description": "xhs-context local archive",

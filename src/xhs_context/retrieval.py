@@ -8,8 +8,8 @@ from functools import lru_cache
 
 from .text import normalize, query_groups, tokens
 
-SEARCH_VERSION = "lexical-body-v4"
-READ_VERSION = "grouped-evidence-v3"
+SEARCH_VERSION = "lexical-body-v5"
+READ_VERSION = "grouped-evidence-v4"
 HASHTAG = re.compile(r"(?<![A-Za-z0-9_+])[#＃][\w\u3400-\u9fff]+", re.UNICODE)
 
 
@@ -119,7 +119,7 @@ def original_spans(text, terms):
     return sorted(spans)
 
 
-def excerpts(blocks, queries, required_terms, maximum=300):
+def excerpts(blocks, queries, required_terms, maximum=300, *, title='', match='terms'):
     terms = set(word for q in queries for word in terms_for(q))
     anchors = set(word for group in query_groups(required_terms) for q in group for word in terms_for(q))
     scored = []
@@ -131,11 +131,20 @@ def excerpts(blocks, queries, required_terms, maximum=300):
         value = fold(meaningful)
         hits = sum(present(term, value) for term in terms)
         anchor_hits = sum(present(term, value) for term in anchors)
-        scored.append((-(hits + 2 * anchor_hits), block["ordinal"], block, hits + anchor_hits > 0))
-    scored.sort(key=lambda entry: entry[:2])
+        # Resolve otherwise equal lexical matches with observable structure,
+        # not a domain-specific definition of "good content". Questions remain
+        # eligible; a question followed by an explanation can win this tie.
+        repeated_title = bool(title) and value.strip() == fold(without_tags(title)).strip()
+        unnumbered = re.sub(r'^\s*(?:\d+[.)、]|[-*])\s*', '', meaningful)
+        sentence = bool(re.search(r'。|(?<!\d)[.!](?:\s|$)', unnumbered.strip()))
+        phrase_hit = any(phrase_present(query, value) for query in queries)
+        tie = int(phrase_hit) if match == 'phrase' else 0
+        tie += .5 * int(sentence) - int(repeated_title)
+        scored.append((-(hits + 2 * anchor_hits), -tie, block["ordinal"], block, hits + anchor_hits > 0))
+    scored.sort(key=lambda entry: entry[:3])
     results = []
-    selected = [entry for entry in scored if entry[3]][:2] or scored[:1]
-    for _, _, block, matched in selected:
+    selected = [entry for entry in scored if entry[4]][:2] or scored[:1]
+    for _, _, _, block, matched in selected:
         text = block["text"]
         spans = original_spans(text, terms | anchors) if matched else []
         start = 0

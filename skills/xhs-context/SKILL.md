@@ -29,6 +29,8 @@ xhs-context search --query "AI Infra" --query "Agent 权限" --query "LLM 响应
 
 `--query` 最多重复四次，各查询的候选合并；`--require` 是所有候选都必须满足的条件，支持等价名称，标签本身不能满足该条件。不要把整个自然语言问题直接当成关键词串，也不要未经用户或原文支持就加入关联领域。
 
+`search` 返回 `next_cursor` 时，可用它继续查看原查询的下一页候选；续页 JSON 仅传 `cursor` 和可选 `max_chars`，或使用 `search --cursor CURSOR --max-chars 6000`。
+
 默认 `--match terms` 允许关键词分散在同篇不同段落。查证技术名词、店名，或发现拆词误召回时，可用 `--match phrase`（JSON 为 `"match":"phrase"`），例如 `search --query "数据并行" --query "张量并行" --match phrase`。每个查询须完整出现在同一字段的一行中，忽略大小写、全半角与横向空白差异，沿用等价别名；标签不能单独满足。它收紧字面匹配，不判断相关性，可能漏掉改写表达，不能用短语零命中断言没有相关内容。
 
 复杂请求可写入 UTF-8 JSON，使用 `search --input request.json`：
@@ -45,13 +47,17 @@ xhs-context search --query "AI Infra" --query "Agent 权限" --query "LLM 响应
 
 优先回读与问题有关的少量候选，批量提交固定 `note_id + revision_id`。使用搜索返回的 `block_id` 定位关键段落，`mode=evidence` 会带上邻近上下文：
 
+先检查摘录是否在提供解释、步骤或事实。标题、目录和纯提问仍可能出现在第一条，不要机械使用 `snippets[0]`；CLI 的结构排序不等于答案质量判断。纯问题列表对于“整理面试题”仍是有效资料。解释不足时可选另一条摘录，或用已读正文里的具体术语继续查询。
+
 ```json
 {"items":[{"note_id":"NOTE_ID","revision_id":"REVISION_ID","block_ids":["BLOCK_ID"]}],"mode":"evidence","max_chars":12000}
 ```
 
 执行 `read --input request.json`。需要整篇核对或名单跨多个段落时用 `mode=full`。当前响应为 `schema_version=2`，read 的 `data.items` 按笔记聚合：每篇每页只出现一次标题、版本、来源和缺口，正文模式使用 `blocks[]`，媒体模式使用 `assets[]`。`continued`/`has_more` 标记本篇跨页；`next_cursor` 表示还有结果，应按任务需要继续读取，不能把尚未返回的部分当作不存在。
 
-续页只发送 `cursor` 和可选 `max_chars`。遇到 `CURSOR_STALE`，重新发起原查询或读取。退出码 3 表示部分成功，检查 `errors` 并使用成功项；不要丢弃整批。输出预算不足时适当提高预算或减少一次读取的笔记数。
+evidence 模式可加 `"context":2`，返回每个选中块前后各两块；范围为 0–4，默认 1。只需核对某一句时可用 0；标题后有多条解释时可扩到 2–4。跨段名单或完整论述仍使用 full。缩小返回量不能以遗漏所需依据为代价。
+
+续页只发送 `cursor` 和可选 `max_chars`，保持原上下文范围。遇到 `CURSOR_STALE`，重新发起原查询或读取。退出码 3 表示部分成功，检查 `errors` 并使用成功项；不要丢弃整批。输出预算不足时适当提高预算或减少一次读取的笔记数。
 
 ## 回读后的判断与继续查询
 
@@ -66,6 +72,8 @@ xhs-context search --query "AI Infra" --query "Agent 权限" --query "LLM 响应
 范围不明、结果异常或需要检查是否收齐时调用 `status`。查询任务不自行执行同步、重建索引或修改资料库。直接读文件时使用 `status` 返回的完整阅读快照，避免把旧版本当成当前结果。
 
 ## 图片证据与单独补图
+
+需要核对图片缺口时，先用 `images plan --note NOTE_ID`（可重复）或 `images plan --collection COLLECTION_ID`。该命令仅检查本地图片状态及正文提示，不采集、不创建任务、不解锁；受限时仍可用。结果中的 `body_image_hints` 给出原文和位置；`explicit_body_reference` 只是正文明确指向图片，`fetch_candidate` 只是补图候选，不能据此声称未读图片一定包含答案。未检测到提示也不代表图片没有价值。可用 `--limit` / `--max-chars` 限量，后续 `--cursor` 续页。
 
 用户询问图片笔记时，可用 `content=all` 找到只有标题的收藏，再以固定版本执行 `read` 的 `mode=asset`。结果在每篇的 `assets[]`，其中 `path` 是可交给宿主图像查看工具的本机路径。检查 `errors`、`gaps`、图片顺序与 `expected_images`；未知总数不能报告“已经读完所有图片”。没有运行 OCR 的图片不会自动成为文本搜索证据。
 
