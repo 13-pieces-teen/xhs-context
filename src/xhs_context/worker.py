@@ -8,6 +8,8 @@ from .common import XhsError, now
 from .network import AnonymousFetcher
 from .processing import LocalOCR, resolve_card, finish_body, body_error, preserve_separate_images
 from .access import access_restriction, restrict_access
+from .jobs import SKIPPED_SOURCE_ERRORS
+from .invalid_sources import invalid_source, mark_invalid, skip_invalid_items
 
 
 @contextmanager
@@ -44,6 +46,7 @@ class Worker:
 
     def recover(self):
         with self.store.write() as db:
+            skip_invalid_items(db)
             db.execute("UPDATE job_items SET state=CASE WHEN attempts<3 THEN 'queued' ELSE 'failed' END,"
                        "error='INTERRUPTED',updated_at=? WHERE state='running'", (now(),))
             # The extension may still own a page or an unacknowledged result after
@@ -54,6 +57,7 @@ class Worker:
     def adopt_body_scope(self):
         """Reuse verified bodies from old media-only failures, keeping history intact."""
         with self.store.write() as db:
+            skip_invalid_items(db)
             rows = db.execute("SELECT i.job_id,i.note_id,i.error,r.payload FROM job_items i "
                               "JOIN notes n ON n.id=i.note_id JOIN revisions r ON r.id=n.current_revision "
                               "WHERE i.state='partial' AND json_extract(r.payload,'$.body_state')='available'").fetchall()
@@ -68,14 +72,15 @@ class Worker:
                            ("ready" if note["body_state"] == "available" else "partial", body_error(note),
                             now(), row["job_id"], row["note_id"]))
 
-    def stopped(self, job_id):
+    def stopped(self, job_id, note_id=None):
         if self.stop_event and self.stop_event.is_set():
             return True
         with self.store.read() as db:
-            return bool(access_restriction(db)) or db.execute("SELECT state FROM jobs WHERE id=?", (job_id,)).fetchone()[0] != "active"
+            return bool(access_restriction(db)) or bool(note_id and invalid_source(db, note_id)) or db.execute("SELECT state FROM jobs WHERE id=?", (job_id,)).fetchone()[0] != "active"
 
     def once(self, job_id=None):
         with self.store.write() as db:
+            skip_invalid_items(db)
             if access_restriction(db):
                 return False
             clause = " AND i.job_id=?" if job_id else ""
@@ -89,11 +94,22 @@ class Worker:
                        "WHERE job_id=? AND note_id=?", (now(), row["job_id"], row["note_id"]))
         job_id, note_id = row["job_id"], row["note_id"]
         try:
+            if self.stopped(job_id, note_id):
+                raise XhsError("SYNC_PAUSED", "Sync paused before reading")
             note = resolve_card(self.store, json.loads(row["payload"]), self.fetcher, self.ocr,
-                                lambda: self.stopped(job_id), media=self.media)
-            if self.stopped(job_id):
+                                lambda: self.stopped(job_id, note_id), media=self.media)
+            if self.stopped(job_id, note_id):
                 raise XhsError("SYNC_PAUSED", "Sync paused before publishing")
             with self.store.write() as db:
+                if invalid_source(db, note_id):
+                    skip_invalid_items(db)
+                    return True
+                # A pause can commit after the last read-only check. Recheck in
+                # the same transaction that publishes the result.
+                job = db.execute("SELECT state FROM jobs WHERE id=?", (job_id,)).fetchone()
+                if access_restriction(db) or not job or job["state"] != "active" or (
+                        self.stop_event and self.stop_event.is_set()):
+                    raise XhsError("SYNC_PAUSED", "Sync paused before publishing")
                 current = db.execute("SELECT r.payload FROM notes n JOIN revisions r ON r.id=n.current_revision WHERE n.id=?",
                                      (note_id,)).fetchone()
                 prior = json.loads(current[0]) if current else {}
@@ -125,12 +141,19 @@ class Worker:
             if isinstance(exc, XhsError) and exc.code == "INCOMPLETE_REFRESH":
                 failure += ":" + ",".join(exc.details["gaps"])
             with self.store.write() as db:
-                paused = code == "SYNC_PAUSED"
-                db.execute("UPDATE job_items SET state=?,error=?,attempts=attempts-?,updated_at=? WHERE job_id=? AND note_id=?",
-                           ("queued" if paused else "failed", failure[:1000], int(paused), now(), job_id, note_id))
+                if code in SKIPPED_SOURCE_ERRORS:
+                    mark_invalid(db, note_id, code, json.loads(row["payload"])["source_url"], job_id)
+                    return True
                 if code in {"ACCESS_RESTRICTED", "RATE_LIMITED"}:
                     restrict_access(db, error=code, source="anonymous")
-                elif code in {"ACCESS_BLOCKED", "LOCAL_NETWORK_BLOCKED", "PROXY_ERROR", "PROXY_CONFIGURATION", "NETWORK_ERROR"}:
+                if invalid_source(db, note_id):
+                    skip_invalid_items(db)
+                    return True
+                paused = code == "SYNC_PAUSED"
+                db.execute("UPDATE job_items SET state=?,error=?,attempts=attempts-?,updated_at=? WHERE job_id=? AND note_id=?",
+                           ("queued" if paused else "skipped" if code in SKIPPED_SOURCE_ERRORS else "failed",
+                            failure[:1000], int(paused), now(), job_id, note_id))
+                if code in {"ACCESS_BLOCKED", "LOCAL_NETWORK_BLOCKED", "PROXY_ERROR", "PROXY_CONFIGURATION", "NETWORK_ERROR"}:
                     db.execute("UPDATE jobs SET state='paused',error=?,updated_at=? WHERE id=?", (code, now(), job_id))
         return True
 

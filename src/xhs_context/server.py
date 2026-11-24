@@ -61,7 +61,7 @@ def make_server(store, token, port=4319):
         def dispatch(self):
             self.boundary()
             parsed = urlsplit(self.path)
-            if self.command == "GET" and parsed.path == "/v1/status":
+            if self.command == "GET" and parsed.path in {"/v1/status", "/v1/invalid-notes"}:
                 return dispatch_sync(store, self.path)
             if self.command != "POST":
                 raise XhsError("NOT_FOUND", "Unknown endpoint")

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .common import SCHEMA_VERSION, XhsError, digest, dumps, now, safe_id
 from .text import TOKENIZER_VERSION, evidence_blocks, indexed, normalize
+from .invalid_sources import INVALID_DDL, initialize_invalid_sources
 
 _WRITE_LOCK = threading.RLock()
 IMAGE_DDL = [
@@ -87,6 +88,7 @@ class Store:
                         db.execute(statement)
                     if "content_mode" not in {row[1] for row in db.execute("PRAGMA table_info(jobs)")}:
                         db.execute("ALTER TABLE jobs ADD COLUMN content_mode TEXT NOT NULL DEFAULT 'anonymous'")
+                    initialize_invalid_sources(db)
                 with self.read() as db:
                     return {"library": str(self.root), "created": False, "generation": self.generation(db)}
             db = sqlite3.connect(self.db_path)
@@ -95,6 +97,7 @@ class Store:
                 db.executescript(DDL)
                 for statement in IMAGE_DDL:
                     db.execute(statement)
+                db.execute(INVALID_DDL)
                 db.executemany("INSERT INTO meta VALUES (?,?)",
                                [("schema_version", str(SCHEMA_VERSION)), ("generation", "0"),
                                 ("tokenizer_version", TOKENIZER_VERSION)])
@@ -148,7 +151,13 @@ class Store:
         suffix = suffix if suffix in {".json", ".png", ".jpg", ".webp", ".gif", ".bin"} else ".bin"
         relative = f"objects/{sha[:2]}/{sha}{suffix}"
         path = self.object_path(relative)
-        if not path.exists():
+        try:
+            intact = digest(path.read_bytes()) == sha
+        except FileNotFoundError:
+            intact = False
+        # A content-addressed name is not proof that its bytes survived intact.
+        # Re-downloading the verified content also repairs its existing object.
+        if not intact:
             path.parent.mkdir(parents=True, exist_ok=True)
             temp = self.root / "staging" / f"{sha}-{threading.get_ident()}.tmp"
             with temp.open("wb") as f:

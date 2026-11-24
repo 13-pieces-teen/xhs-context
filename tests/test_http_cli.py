@@ -23,6 +23,11 @@ def test_real_loopback_receiver_commits_and_rejects_wrong_origin(store):
             assert client.get("/v1/status").status_code == 401
             auth = {"Authorization": "Bearer " + token}
             assert client.get("/v1/status", headers={**auth, "Origin": "https://evil.example"}).status_code == 403
+            assert client.get('/v1/invalid-notes').status_code == 401
+            assert client.get('/v1/invalid-notes', headers={**auth, 'Origin': 'https://evil.example'}).status_code == 403
+            invalid = client.get('/v1/invalid-notes?limit=10&offset=0', headers=auth)
+            assert invalid.status_code == 200 and invalid.json()['data'] == {'total': 0, 'items': [], 'has_more': False}
+            assert client.get('/v1/invalid-notes?limit=0', headers=auth).status_code == 400
             create = {"job_id": "http-job", "expected_count": 1, "collection": {
                 "id": "http-folder", "name": "HTTP test", "source_url": "https://www.xiaohongshu.com/user/profile/test"}}
             assert client.post("/v1/jobs", json=create, headers=auth).status_code == 200

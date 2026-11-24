@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>收藏上下文 · iOS 交互设计稿</title>
+  <link rel="stylesheet" href="../../browser-extension/vendor/daisyui/base/properties.css">
+  <link rel="stylesheet" href="../../browser-extension/vendor/daisyui/theme/light.css">
+  <link rel="stylesheet" href="../../browser-extension/vendor/daisyui/components/button.css">
+  <link rel="stylesheet" href="../../browser-extension/vendor/daisyui/components/radialprogress.css">
+  <link rel="stylesheet" href="../../browser-extension/vendor/daisyui/components/input.css">
+  <link rel="stylesheet" href="../../browser-extension/vendor/daisyui/components/checkbox.css">
+  <link rel="stylesheet" href="../../browser-extension/vendor/daisyui/components/collapse.css">
+  <link rel="stylesheet" href="prototype.css">
+  <script src="icons.js" defer></script>
+  <script src="prototype.js" defer></script>
+</head>
+<body>
+  <header class="studio-header"><a href="../../docs/panel-design.md" class="studio-brand">收藏上下文 <span>DESIGN STUDY / 03</span></a><span class="draft-label">可交互设计稿 · 2026.11</span></header>
+  <main class="studio">
+    <section class="intro">
+      <p class="eyebrow">INSPIRED BY iOS 27</p>
+      <h1>轻盈的操作。<br>清楚的进度。</h1>
+      <p class="lede">让玻璃停留在操作层，<br>让内容保持安静、清晰。</p>
+      <div class="design-notes">
+        <div><span>01</span><p><strong>层次</strong>实底内容，浮动玻璃工具栏。</p></div>
+        <div><span>02</span><p><strong>秩序</strong>同排双环，一眼看清两段进度。</p></div>
+        <div><span>03</span><p><strong>连续</strong>轻按反馈，面板从操作处展开。</p></div>
+      </div>
+      <p class="source-note">参考 Apple 最新正式版 iOS 27.2.1 与 HIG。<br>基于 daisyUI，图标使用 Lucide。<br>当前插件已采用此设计，这里保留合成演示。</p>
+      <a class="source-link" href="https://developer.apple.com/design/human-interface-guidelines/materials" target="_blank" rel="noopener">查看 Apple 设计依据 ↗</a>
+    </section>
+
+    <section class="preview-column" aria-label="360像素插件预览">
+      <div class="preview-label"><span>收藏上下文</span><span>360 × 600</span></div>
+      <div id="panel" class="panel" data-appearance="light">
+        <div id="app-content" class="app-content">
+          <header class="app-header">
+            <div class="brand"><img src="../../browser-extension/icons/icon-128.png" alt="" width="25" height="25"><span>收藏上下文</span></div>
+            <span class="connected"><i></i>已连接</span>
+            <button id="refresh" class="btn icon-button glass" aria-label="刷新进度"><i class="icon" style="--icon:url(icons/rotate-cw.svg)"></i></button>
+          </header>
+          <div id="scroll-area" class="scroll-area">
+            <div class="heading"><p id="task-context" class="overline">当前收藏夹</p><div class="title-row"><h2 id="collection-name">收藏 · 笔记</h2><span id="state-label" class="state-label" role="status">已暂停</span></div></div>
+            <div id="progress-card" class="progress-card">
+              <div class="metric"><div id="list-meter" class="radial-progress" role="progressbar" aria-label="收藏列表进度" aria-valuemin="0" aria-valuemax="100"><span id="list-percent">88<span>%</span></span></div><h3>收藏列表</h3><p class="metric-count"><strong id="list-count">851</strong><span id="list-total"> / 969</span></p><p id="list-caption" class="metric-caption">尚未确认收齐</p></div>
+              <div class="metric"><div id="body-meter" class="radial-progress" role="progressbar" aria-label="已发现笔记的正文保存进度" aria-valuemin="0" aria-valuemax="100"><span id="body-percent">99<span>%</span></span></div><h3>正文保存</h3><p class="metric-count"><strong id="body-count">840</strong><span id="body-total"> / 851</span></p><p id="body-caption" class="metric-caption">占已发现笔记</p></div>
+            </div>
+            <div id="ready-card" class="ready-card" hidden><span class="ready-icon"><i class="icon" style="--icon:url(icons/file-text.svg)"></i></span><strong>969 篇笔记</strong><p>准备好后，开始保存到本机。</p></div>
+            <p id="context-note" class="context-note">已保存正文保留，随时可以继续。</p>
+            <div id="restriction" class="restriction" hidden><i class="icon" style="--icon:url(icons/shield-check.svg)"></i><div><strong>需要登录或验证</strong><p>完成后重新检查，再手动继续。</p></div></div>
+            <button id="primary" class="btn primary"><i class="icon" style="--icon:url(icons/play.svg)"></i><span>继续读取</span></button>
+            <div id="end-actions" class="end-actions" hidden><button id="confirm-end" class="btn primary">确认已到末尾</button><button id="save-partial" class="btn text-button">先保存已读内容</button></div>
+            <div class="section-label">常用操作</div>
+            <div class="quick-actions">
+              <button class="btn action" data-action="source"><i class="icon" style="--icon:url(icons/external-link.svg)"></i><span>打开收藏页</span></button>
+              <button id="recover" class="btn action" data-action="recover"><i class="icon" style="--icon:url(icons/file-text.svg)"></i><span>补全正文</span></button>
+              <button class="btn action" data-action="current-image"><i class="icon" style="--icon:url(icons/image.svg)"></i><span>当前笔记图片</span></button>
+              <button class="btn action" data-action="collection-images"><i class="icon" style="--icon:url(icons/images.svg)"></i><span>收藏夹图片</span></button>
+            </div>
+            <p class="local-note"><i class="icon" style="--icon:url(icons/shield-check.svg)"></i>内容保存于本机</p>
+          </div>
+          <div class="dock-edge"></div>
+          <nav class="dock glass" aria-label="辅助工具">
+            <button id="details-button" class="btn dock-button" data-sheet="details" aria-expanded="false"><i class="icon" style="--icon:url(icons/info.svg)"></i><span>读取详情</span></button>
+            <button id="settings-button" class="btn dock-button" data-sheet="settings" aria-expanded="false"><i class="icon" style="--icon:url(icons/settings-2.svg)"></i><span>设置</span></button>
+            <button id="help-button" class="btn dock-button" data-sheet="help" aria-expanded="false"><i class="icon" style="--icon:url(icons/circle-help.svg)"></i><span>帮助</span></button>
+          </nav>
+        </div>
+        <div id="toast" class="toast" role="status" hidden></div>
+        <div id="sheet-layer" class="sheet-layer" hidden>
+          <div id="scrim" class="scrim"></div>
+          <section id="sheet" class="sheet glass" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1">
+            <header class="sheet-header"><h2 id="sheet-title"></h2><button id="close-sheet" class="btn icon-button" aria-label="关闭面板"><i class="icon" style="--icon:url(icons/x.svg)"></i></button></header>
+            <div id="sheet-body" class="sheet-body"></div>
+          </section>
+        </div>
+      </div>
+      <p class="preview-caption">示例数据 · 所有操作仅用于演示</p>
+    </section>
+
+    <aside class="controls" aria-label="设计稿演示控制">
+      <div class="control-heading"><i class="icon" style="--icon:url(icons/sliders-horizontal.svg)"></i><h2>试试这版设计</h2></div>
+      <p class="control-intro">点击面板内的按钮，体验反馈与过渡。</p>
+      <fieldset class="state-picker"><legend>任务状态</legend><div id="state-picker"><button class="btn demo-state" data-state="paused" aria-pressed="true">已暂停</button><button class="btn demo-state" data-state="running" aria-pressed="false">读取中</button><button class="btn demo-state" data-state="ready" aria-pressed="false">待开始</button><button class="btn demo-state" data-state="restricted" aria-pressed="false">访问受限</button><button class="btn demo-state" data-state="unknown" aria-pressed="false">总数未知</button><button class="btn demo-state" data-state="complete" aria-pressed="false">已结束</button><button class="btn demo-state" data-state="confirm" aria-pressed="false">核对末尾</button><button class="btn demo-state" data-state="disconnected" aria-pressed="false">连接中断</button></div></fieldset>
+      <div class="control-row"><span>外观</span><div class="appearance-picker"><button class="btn" id="light-mode" aria-label="浅色外观" aria-pressed="true"><i class="icon" style="--icon:url(icons/sun.svg)"></i></button><button class="btn" id="dark-mode" aria-label="深色外观" aria-pressed="false"><i class="icon" style="--icon:url(icons/moon.svg)"></i></button></div></div>
+      <label class="range-label" for="opacity-control">玻璃浓度 <span id="opacity-value">72%</span></label><input id="opacity-control" type="range" min="40" max="100" value="72" aria-label="演示玻璃浓度"><div class="range-ends"><span>清透</span><span>浓色</span></div>
+      <label class="reduce-label"><span>减少动态效果</span><input id="reduce-motion" class="checkbox checkbox-sm" type="checkbox"></label>
+      <button id="play-demo" class="btn demo-play"><i class="icon" style="--icon:url(icons/play.svg)"></i>播放一次进度变化</button>
+      <button id="preview-settings" class="btn demo-secondary">查看设置面板 <span>↗</span></button>
+      <p class="motion-note">轻按 120ms · 状态 180ms · 面板 260ms<br>本稿拟定的 Web 参数，可打断、可关闭。</p>
+    </aside>
+  </main>
+  <footer class="studio-footer"><span>保留陶土红品牌色 · 原有功能与进度含义</span><a href="DESIGN.md">样式与动效说明 ↗</a></footer>
+</body>
+</html>

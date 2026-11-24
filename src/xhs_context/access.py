@@ -37,11 +37,17 @@ def unlock_access(store, *, confirmed=False):
     if confirmed is not True:
         raise XhsError("CONFIRM_ACCESS_RESTORED", "Manually verify normal access, then use --confirm-access-restored",
                        exit_code=2)
+    return refresh_access(store, {})
+
+
+def refresh_access(store, request):
+    """Allow a fresh, explicit attempt without claiming platform access has recovered."""
+    fields(request, set())
     with store.write() as db:
         previous = access_restriction(db)
         if previous is None:
             return {"unlocked": False, "jobs_resumed": False}
-        # Unlocking only changes the local guard; it neither probes XHS nor resumes jobs.
+        # Refreshing only changes the local guard; it neither probes XHS nor resumes jobs.
         db.execute("UPDATE jobs SET state='paused',updated_at=? WHERE state='active'", (now(),))
         db.execute("UPDATE jobs SET error=NULL WHERE error IN ('ACCESS_RESTRICTED','RATE_LIMITED')")
         if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='image_jobs'").fetchone():

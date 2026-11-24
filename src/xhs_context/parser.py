@@ -8,16 +8,46 @@ from html.parser import HTMLParser
 
 from .common import XhsError
 
+UNAVAILABLE_NOTE = re.compile(r"(?:当前|该|这篇)?笔记(?:已被|已经|已)删除|(?:当前|该|这篇)?笔记不存在|找不到(?:对应的?)?笔记")
+STANDALONE_UNAVAILABLE = re.compile(
+    r"^(?:很?抱歉[，,！!：:]?\s*)?(?:" + UNAVAILABLE_NOTE.pattern +
+    r")[。.!！]?(?:\s*(?:这篇|该|当前|此)?笔记已无法访问[。.!！]?)?"
+    r"(?:\s*(?:返回首页|返回上一页|返回))*$")
+RECOVERABLE_MESSAGE = re.compile(r"登录后|请[^。！\n]{0,30}登录|扫码登录|登录账号|登录[^。！\n]{0,20}(?:查看|浏览|继续|重试)|"
+                                 r"验证码|安全验证|完成验证|网络|连接|加载|稍后|重试|刷新|暂时|临时|访问频繁")
+ERROR_CLASSES = {"error-container", "error-page", "note-error", "error-wrapper", "error-message", "error-text",
+                 "error-title", "not-found", "not-found-container", "note-not-found", "note-unavailable",
+                 "empty-container", "empty-state", "empty-page", "reds-empty"}
+VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+
 
 class Scripts(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=False)
         self.in_script = False
         self.current, self.scripts = [], []
-        self.page_text, self.in_style, self.has_note_root = [], False, False
+        self.page_text, self.in_style, self.has_note_content = [], False, False
+        self.has_stylesheet = False
+        self.elements, self.error_regions = [], []
 
     def handle_starttag(self, tag, attrs):
-        self.has_note_root |= dict(attrs).get("id") == "noteContainer"
+        attributes = dict(attrs)
+        self.has_stylesheet |= tag == "style" or (tag == "link" and "stylesheet" in attributes.get("rel", "").lower().split())
+        classes = set(attributes.get("class", "").split())
+        hidden = any(frame["hidden"] for frame in self.elements) or "hidden" in attributes or \
+            attributes.get("aria-hidden") == "true" or bool(re.search(
+                r"(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse)|opacity\s*:\s*0(?:\s|;|$))",
+                attributes.get("style", ""), re.I)) or tag in {"template", "noscript"}
+        excluded = any(frame["excluded"] for frame in self.elements) or hidden or \
+            attributes.get("id") in {"noteContainer", "detail-title", "detail-desc"} or \
+            any("comment" in name for name in classes) or bool(classes & {"note-item", "feeds-container"}) or tag == "blockquote"
+        note_content = not hidden and attributes.get("id") in {"detail-title", "detail-desc"} and \
+            any(frame["note_root"] for frame in self.elements)
+        region = ("main" if tag == "main" else "error" if classes & ERROR_CLASSES or attributes.get("role") == "alert" or
+                  (tag in {"h1", "h2"} and any(frame["tag"] == "main" for frame in self.elements)) else None)
+        if tag not in VOID_TAGS:
+            self.elements.append({"tag": tag, "hidden": hidden, "excluded": excluded, "region": region, "text": [],
+                                  "note_root": attributes.get("id") == "noteContainer", "note_content": note_content})
         if tag == "style":
             self.in_style = True
         if tag == "script":
@@ -30,17 +60,47 @@ class Scripts(HTMLParser):
         if tag == "script":
             self.in_script = False
             self.scripts.append("".join(self.current))
+        for index in range(len(self.elements) - 1, -1, -1):
+            if self.elements[index]["tag"] == tag:
+                for frame in self.elements[index:]:
+                    if frame["region"] and not frame["excluded"]:
+                        self.error_regions.append(frame)
+                del self.elements[index:]
+                break
 
     def handle_data(self, data):
         if self.in_script:
             self.current.append(data)
-        elif not self.in_style:
+        elif not self.in_style and not any(frame["hidden"] for frame in self.elements):
             self.page_text.append(data)
+            if any(frame["note_content"] for frame in self.elements) and re.search(r"[^\s\u200b-\u200f\ufeff]", data):
+                self.has_note_content = True
+            if not any(frame["excluded"] for frame in self.elements):
+                for frame in self.elements:
+                    if frame["region"]:
+                        frame["text"].append(data)
 
     def check_restriction(self):
         text = " ".join(self.page_text)
-        if not self.has_note_root and "安全限制" in text and "检测到异常访问" in text and re.search(r"\b300013\b", text):
+        if not self.has_note_content and "安全限制" in text and "检测到异常访问" in text and re.search(r"\b300013\b", text):
             raise XhsError("ACCESS_RESTRICTED", "Source displays security restriction 300013", exit_code=5)
+
+    def check_unavailable(self):
+        # Raw HTML cannot establish whether a stylesheet hides an error template.
+        # A readable note DOM also rules out treating an unrelated notice as its loss.
+        if self.has_note_content or self.has_stylesheet:
+            return
+        visible_text = re.sub(r"[\u200b-\u200f\ufeff]", "", " ".join(self.page_text))
+        if RECOVERABLE_MESSAGE.search(visible_text) or "需要登录" in visible_text:
+            return
+        for frame in self.error_regions + self.elements:
+            if frame["excluded"] or not frame["region"]:
+                continue
+            text = " ".join(frame["text"]).strip()
+            # Headings/alerts must be affirmative standalone notices too, not
+            # articles, negations or discussions containing an error phrase.
+            if STANDALONE_UNAVAILABLE.fullmatch(text) and STANDALONE_UNAVAILABLE.fullmatch(visible_text.strip()):
+                raise XhsError("SOURCE_UNAVAILABLE", "Source explicitly reports this note is unavailable", exit_code=5)
 
 
 def json_object(source, start):
@@ -84,6 +144,7 @@ def parse_note(html, note_id, source_url):
                 continue
     if not states:
         collector.check_restriction()
+        collector.check_unavailable()
         if re.search(r"验证码|安全验证|访问频繁|登录后查看", html):
             raise XhsError("ACCESS_BLOCKED", "Page requires verification or authenticated viewing", exit_code=5)
         raise XhsError("PARSE_FAILED", "No supported serialized note state found", exit_code=5)
@@ -108,6 +169,7 @@ def parse_note(html, note_id, source_url):
             queue.extend((value, inherited, path) for value in node if isinstance(value, (dict, list)))
     if not candidates:
         collector.check_restriction()
+        collector.check_unavailable()
         raise XhsError("NOTE_NOT_FOUND", "Page state does not contain the requested note", exit_code=5)
     _, node, detail_context = max(candidates, key=lambda item: item[0])
     body = node.get("desc", node.get("content"))

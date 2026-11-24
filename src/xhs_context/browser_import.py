@@ -10,6 +10,8 @@ from .network import validate_note_url, validate_url
 from .processing import finish_body, body_error, preserve_separate_images
 from .access import access_restriction, require_access, restrict_access
 from .browser_retry import RETRYABLE, DELAYS, clock_ms, pending_retry
+from .jobs import SKIPPED_SOURCE_ERRORS, skip_unavailable_items
+from .invalid_sources import invalid_source, mark_invalid, skip_invalid_items
 
 
 def enable_browser(store, job_id):
@@ -18,6 +20,7 @@ def enable_browser(store, job_id):
         job = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
         if not job:
             raise XhsError("JOB_NOT_FOUND", "Unknown job")
+        skip_unavailable_items(db, job_id)
         if job["content_mode"] != "browser":
             # A different acquisition method gets a fresh retry budget.
             db.execute("UPDATE job_items SET state='queued',attempts=0,error=NULL WHERE job_id=? "
@@ -33,8 +36,33 @@ def enable_browser(store, job_id):
 
 
 def next_page(store):
+    """One browser tab serves explicit body and image-gallery work."""
+    from .image_browser import next_image_page
+    with store.read() as db:
+        previous = db.execute("SELECT value FROM meta WHERE key='browser_last_kind'").fetchone()
+    # A long body queue must not starve a user-requested gallery task.
+    order = [('body', _next_body_page), ('images', next_image_page)]
+    if previous and previous[0] == 'body':
+        order.reverse()
+    pending = {'task': None}
+    for kind, select in order:
+        result = select(store)
+        if result.get('access_restriction'):
+            return result
+        if result.get('task'):
+            with store.write() as db:
+                db.execute("INSERT INTO meta(key,value) VALUES('browser_last_kind',?) "
+                           "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (kind,))
+            return result
+        if result.get('browser_retry'):
+            pending = result
+    return pending
+
+
+def _next_body_page(store):
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=90)).isoformat(timespec="milliseconds")
     with store.write() as db:
+        skip_invalid_items(db)
         restriction = access_restriction(db)
         if restriction:
             return {"task": None, "access_restriction": restriction}
@@ -55,6 +83,9 @@ def next_page(store):
                 db.execute("UPDATE jobs SET state='paused',error='BROWSER_TIMEOUT',updated_at=? WHERE id=?",
                            (now(), item['job_id']))
         if db.execute("SELECT 1 FROM job_items WHERE state='browser_running'").fetchone():
+            return {"task": None}
+        if (db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='image_items'").fetchone()
+                and db.execute("SELECT 1 FROM image_items WHERE state='browser_running'").fetchone()):
             return {"task": None}
         retry = pending_retry(db)
         if retry and retry['retry_at'] > clock_ms():
@@ -78,6 +109,23 @@ def next_page(store):
                    "WHERE job_id=? AND note_id=?", (dumps(payload), now(), row["job_id"], row["note_id"]))
         return {"task": {"job_id": row["job_id"], "note_id": row["note_id"],
                          "source_url": payload["source_url"], "lease_id": lease}}
+
+
+def check_page(store, request):
+    """Recheck a particular lease before the extension opens or reads its page."""
+    fields(request, {"job_id", "note_id", "lease_id"}, {"job_id", "note_id", "lease_id"})
+    job_id = safe_id(request["job_id"], "job_id")
+    note_id = safe_id(request["note_id"], "note_id")
+    lease_id = safe_id(request["lease_id"], "lease_id")
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=90)).isoformat(timespec="milliseconds")
+    with store.read() as db:
+        if access_restriction(db) or invalid_source(db, note_id):
+            return {"allowed": False}
+        row = db.execute("SELECT i.payload,i.updated_at FROM job_items i JOIN jobs j ON j.id=i.job_id "
+                         "WHERE i.job_id=? AND i.note_id=? AND i.state='browser_running' "
+                         "AND j.state='active' AND j.content_mode='browser'", (job_id, note_id)).fetchone()
+        return {"allowed": bool(row and row["updated_at"] >= cutoff and
+                                json.loads(row["payload"]).get("browser_lease") == lease_id)}
 
 
 def normalize_snapshot(snapshot, card):
@@ -128,15 +176,28 @@ def accept_page(store, job_id, request):
         payload = json.loads(row["payload"])
         if payload.get("browser_lease") != lease:
             raise XhsError("CONFLICT", "Browser task lease expired")
-        if row["state"] != "browser_running":
-            return {"accepted": True, "duplicate": True}
-        # A genuine leased page can reveal a restriction while a pause races it.
-        # Preserve that signal even when ordinary content results are ignored.
-        if request.get("error") == "ACCESS_RESTRICTED":
+        # A valid in-flight page can report a real restriction even after another
+        # task marks this ID invalid. Record the lease receipt so replaying the
+        # same error after an explicit refresh cannot reapply the old restriction.
+        if (request.get("error") == "ACCESS_RESTRICTED" and row["state"] in {"browser_running", "skipped"}
+                and payload.get("browser_restriction_reported") != lease):
             restrict_access(db)
+            payload["browser_restriction_reported"] = lease
+            db.execute("UPDATE job_items SET payload=? WHERE job_id=? AND note_id=?", (dumps(payload), job_id, note_id))
+            if invalid_source(db, note_id):
+                skip_invalid_items(db)
+                return {"accepted": True, "restricted": True, "skipped": True}
             db.execute("UPDATE job_items SET state='failed',error='ACCESS_RESTRICTED',updated_at=? "
                        "WHERE job_id=? AND note_id=?", (now(), job_id, note_id))
             return {"accepted": True, "restricted": True}
+        if invalid_source(db, note_id):
+            skip_invalid_items(db)
+            return {"accepted": True, "skipped": True, "duplicate": row["state"] != "browser_running"}
+        if row["state"] != "browser_running":
+            return {"accepted": True, "duplicate": True}
+        if request.get("error") in SKIPPED_SOURCE_ERRORS:
+            mark_invalid(db, note_id, request["error"], payload["source_url"], job_id)
+            return {"accepted": True, "skipped": True, "duplicate": False}
         if row["job_state"] != "active":
             db.execute("UPDATE job_items SET state='queued',attempts=MAX(0,attempts-1),error=NULL,updated_at=? "
                        "WHERE job_id=? AND note_id=?", (now(), job_id, note_id))
@@ -158,7 +219,7 @@ def accept_page(store, job_id, request):
                        (dumps(payload), "ready" if ready else "partial", body_error(note), now(), job_id, note_id))
         else:
             code = request["error"]
-            if code not in RETRYABLE | {"ACCESS_BLOCKED", "SOURCE_UNAVAILABLE", "SOURCE_LINK_EXPIRED", "BROWSER_PARSE_FAILED", "BROWSER_PAUSED", "BROWSER_ERROR"}:
+            if code not in RETRYABLE | SKIPPED_SOURCE_ERRORS | {"ACCESS_BLOCKED", "NOTE_NOT_FOUND", "BROWSER_PARSE_FAILED", "BROWSER_PAUSED", "BROWSER_ERROR"}:
                 raise XhsError("INVALID_ARGUMENT", "Unknown browser error")
             if code in RETRYABLE and row['attempts'] < 3:
                 payload['browser_retry_at'] = clock_ms() + DELAYS[max(0, row['attempts'] - 1)] * 1000
@@ -166,7 +227,8 @@ def accept_page(store, job_id, request):
                            (dumps(payload), code, now(), job_id, note_id))
                 return {'accepted': True, 'browser_retry': pending_retry(db, job_id)}
             db.execute("UPDATE job_items SET state=?,error=?,attempts=attempts-?,updated_at=? WHERE job_id=? AND note_id=?",
-                       ("queued" if code == "BROWSER_PAUSED" else "failed", None if code == "BROWSER_PAUSED" else code,
+                       ("queued" if code == "BROWSER_PAUSED" else "skipped" if code in SKIPPED_SOURCE_ERRORS else "failed",
+                        None if code == "BROWSER_PAUSED" else code,
                         int(code == "BROWSER_PAUSED"), now(), job_id, note_id))
             if code in RETRYABLE | {"ACCESS_BLOCKED", "BROWSER_ERROR"}:
                 db.execute("UPDATE jobs SET state='paused',error=?,updated_at=? WHERE id=?", (code, now(), job_id))

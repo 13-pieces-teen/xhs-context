@@ -3,15 +3,21 @@ import {noteFromUrl, pageKey} from "./shared.mjs";
 import {NativeClient} from "./native.mjs";
 import {BrowserReader} from "./browser-reader.mjs";
 
-const ready = chrome.storage.local.setAccessLevel({accessLevel: "TRUSTED_CONTEXTS"});
 const journal = new Journal(chrome.storage.local);
 const native = new NativeClient(chrome.runtime);
 const browserReader = new BrowserReader(chrome.tabs, native, journal, stopScans);
 let flushing = null;
+let acquisitionEpoch = 0;
+const ready = chrome.storage.local.setAccessLevel({accessLevel: "TRUSTED_CONTEXTS"}).then(async () => {
+  acquisitionEpoch = (await journal.load()).acquisition_epoch || 0;
+});
 
 async function stopScans() {
+  await ready;
+  const epoch = ++acquisitionEpoch;
   const sessions = Object.values((await journal.load()).sessions).filter(s => !s.finalized && s.scan_state === "scanning");
   await journal.mutate(state => {
+    state.acquisition_epoch = Math.max(state.acquisition_epoch || 0, epoch);
     for (const session of sessions) {
       state.sessions[session.job_id].scan_state = "paused";
       state.sessions[session.job_id].scan_error = "ACCESS_RESTRICTED";
@@ -22,11 +28,38 @@ async function stopScans() {
   await Promise.allSettled(sessions.map(s => chrome.tabs.sendMessage(s.tab_id, {type: "pause"})));
 }
 
-async function requireAcquisition(jobId) {
+async function requireAcquisition(jobId, {scan = false} = {}) {
+  if (browserReader.refreshing && !scan) throw new Error('正在刷新，请稍后继续读取。');
   if ((await journal.load()).restriction_pending) throw new Error("ACCESS_RESTRICTED");
   const status = await native.request("/v1/status" + (jobId ? "?job_id=" + jobId : ""));
   if (status.access_restriction) throw new Error("ACCESS_RESTRICTED");
   return status;
+}
+
+function checkIntent(epoch) {
+  if (epoch !== acquisitionEpoch) throw new Error('读取状态已改变，请重新点击读取。');
+}
+async function acquisitionIntent(jobId) {
+  const epoch = acquisitionEpoch;
+  await requireAcquisition(jobId);
+  checkIntent(epoch);
+  return epoch;
+}
+function activate(epoch, path, body) {
+  checkIntent(epoch);
+  if (browserReader.refreshing) throw new Error('正在刷新，请稍后继续读取。');
+  // NativeClient posts synchronously: no await may separate this check/send.
+  return native.request(path, body);
+}
+function updateIntent(epoch, update) {
+  return journal.mutate(state => { checkIntent(epoch); return update(state); });
+}
+function cancelPendingAcquisition() {
+  const epoch = ++acquisitionEpoch;
+  return journal.mutate(state => {
+    state.acquisition_epoch = Math.max(state.acquisition_epoch || 0, epoch);
+    state.queue = state.queue.filter(q => !/\/(resume|browser)$/.test(q.path));
+  });
 }
 
 async function flush() {
@@ -51,6 +84,20 @@ async function flush() {
     }
   })().finally(() => { flushing = null; });
   return flushing;
+}
+
+async function resumeImages(jobId, epoch) {
+  await flush();
+  const pausePath = '/v1/image-jobs/' + jobId + '/pause';
+  if ((await journal.load()).queue.some(q => q.path === pausePath))
+    throw new Error('暂停操作尚未同步，请重新连接本机组件后继续补图。');
+  const result = await activate(epoch, '/v1/image-jobs/' + jobId + '/browser', {});
+  await updateIntent(epoch, s => {
+    if (s.image_paused) delete s.image_paused[jobId];
+    s.browser_error = null; s.browser_wait = null;
+  });
+  void browserReader.pump();
+  return result;
 }
 
 async function inspectTab(tabId) {
@@ -80,13 +127,14 @@ async function contentSession(message, sender, allowMoved = false) {
   return session;
 }
 
-async function scan(session, page) {
-  await journal.mutate(s => {
+async function scan(session, page, epoch) {
+  await updateIntent(epoch, s => {
     s.active_job_id = session.job_id;
     s.sessions[session.job_id].tab_id = page.tab_id;
     s.sessions[session.job_id].view_marker = page.view_marker;
     s.sessions[session.job_id].scan_error = "";
   });
+  checkIntent(epoch);
   const result = await chrome.tabs.sendMessage(page.tab_id, {type: "start", job_id: session.job_id,
     page_key: session.page_key, view_marker: page.view_marker});
   if (result?.error) throw new Error(result.error);
@@ -96,7 +144,7 @@ async function handle(message, sender) {
   await ready;
   if (message.type === "scan-continue") {
     await contentSession(message, sender);
-    const status = await requireAcquisition(message.job_id);
+    const status = await requireAcquisition(message.job_id, {scan: true});
     if (status.job?.state !== "active") throw new Error("读取已暂停");
     return {};
   }
@@ -130,11 +178,21 @@ async function handle(message, sender) {
       if (session.finalized) return;
       session.scan_state = message.state;
       session.scan_error = String(message.error || "").slice(0, 200);
+      if (message.error === 'ACCESS_RESTRICTED') state.restriction_pending = true;
     });
+    // Respond to the page before asking it to pause: pause waits for scan.done.
+    if (message.error === 'ACCESS_RESTRICTED') void browserReader.pump();
     if (message.state === "page_end") await finalize(message.job_id, "page_end");
     return {};
   }
   if (sender.url !== chrome.runtime.getURL("popup.html")) throw new Error("请从扩展面板操作。");
+
+  if (message.type === 'refresh-access') return browserReader.refreshAccess();
+  if (message.type === 'invalid-notes') {
+    const offset = message.offset ?? 0;
+    if (!Number.isInteger(offset) || offset < 0 || offset > 100000) throw new Error('无效的列表位置');
+    return native.request('/v1/invalid-notes?limit=50&offset=' + offset);
+  }
 
   if (message.type === "state") {
     let page = null, pageError = null;
@@ -147,7 +205,7 @@ async function handle(message, sender) {
     let serverStatus = null, connectionError = null;
     try {
       serverStatus = await native.request("/v1/status" + (session ? "?job_id=" + session.job_id : ""));
-      if (serverStatus.access_restriction) await stopScans();
+      if (serverStatus.access_restriction && !browserReader.refreshing) await stopScans();
     }
     catch (error) { connectionError = error.message; }
     void flush();
@@ -157,7 +215,7 @@ async function handle(message, sender) {
       connection_error: connectionError, server_status: serverStatus};
   }
   if (message.type === 'images-current') {
-    await requireAcquisition();
+    const epoch = await acquisitionIntent();
     const note = await currentNote();
     if (!note) throw new Error('请打开已归档笔记的详情页。');
     const result = await chrome.tabs.sendMessage(note.tab_id, {type: 'read-images', note_id: note.note_id});
@@ -169,21 +227,36 @@ async function handle(message, sender) {
     }
     if (result?.error) throw new Error(result.error);
     if (!result?.snapshot) throw new Error('图片区域尚未加载，请稍后再试。');
-    return native.request('/v1/image-jobs', {job_id: crypto.randomUUID(), snapshot: result.snapshot});
+    return activate(epoch, '/v1/image-jobs', {job_id: crypto.randomUUID(), snapshot: result.snapshot});
   }
   if (message.type === 'images-collection') {
-    await requireAcquisition();
+    const epoch = await acquisitionIntent();
     const session = (await journal.load()).sessions[message.job_id];
     if (!session) throw new Error('请先读取收藏列表。');
-    return native.request('/v1/image-jobs', {job_id: crypto.randomUUID(), collection_id: session.collection_id});
+    const result = await activate(epoch, '/v1/image-jobs', {job_id: crypto.randomUUID(), collection_id: session.collection_id, browser: true});
+    checkIntent(epoch);
+    if (result.reused && (result.state === 'paused' || !result.browser_mode)) return resumeImages(result.job_id, epoch);
+    void browserReader.pump();
+    return result;
   }
   if (['images-pause', 'images-resume'].includes(message.type)) {
-    if (message.type === 'images-resume') await requireAcquisition();
-    return native.request('/v1/image-jobs/' + message.job_id + '/' + (message.type === 'images-pause' ? 'pause' : 'resume'), {});
+    if (message.type === 'images-resume') {
+      const epoch = await acquisitionIntent();
+      return resumeImages(message.job_id, epoch);
+    }
+    await cancelPendingAcquisition();
+    await journal.mutate(s => {
+      (s.image_paused ||= {})[message.job_id] = true;
+      const path = '/v1/image-jobs/' + message.job_id + '/pause';
+      if (!s.queue.some(q => q.path === path))
+        s.queue.push({id: crypto.randomUUID(), job_id: message.job_id, path, body: {}});
+    });
+    await flush();
+    return {};
   }
 
   if (message.type === "start") {
-    await requireAcquisition();
+    const epoch = await acquisitionIntent();
     const page = await currentPage();
     if (page.scope === "wrong_tab") throw new Error("请先切换到“收藏”标签。");
     if (page.scope === "wrong_subtab") throw new Error("请切换到收藏里的“笔记”标签。");
@@ -201,9 +274,9 @@ async function handle(message, sender) {
       s.collection_id === collectionId && !s.finalized);
     if (existing) {
       await flush();
-      await native.request("/v1/jobs/" + existing.job_id + "/resume", {});
-      await journal.mutate(s => { s.sessions[existing.job_id].user_paused = false; s.browser_error = null; s.browser_wait = null; });
-      await scan(existing, page);
+      await activate(epoch, "/v1/jobs/" + existing.job_id + "/resume", {});
+      await updateIntent(epoch, s => { s.sessions[existing.job_id].user_paused = false; s.browser_error = null; s.browser_wait = null; });
+      await scan(existing, page, epoch);
       void flush();
       return {job_id: existing.job_id, resumed: true};
     }
@@ -213,32 +286,38 @@ async function handle(message, sender) {
       next_seq: 0, discovered: 0, scan_state: "scanning", finalized: false, started_at: new Date().toISOString()};
     // Deliver a pending finish first, so the previous scan of this view is closed.
     await flush();
-    await native.request("/v1/jobs", {job_id: jobId, expected_count: expected,
+    await activate(epoch, "/v1/jobs", {job_id: jobId, expected_count: expected,
       collection: {id: collectionId, name, source_url: page.page_key, identity_kind: "local_view"}});
     await journal.mutate(state => {
       for (const old of Object.keys(state.sessions)) {
         if (Object.keys(state.sessions).length <= 20) break;
         if (state.sessions[old].finalized && !state.queue.some(q => q.job_id === old)) delete state.sessions[old];
       }
-      state.sessions[jobId] = session;
+      // A created job remains discoverable if refresh cancelled its delayed
+      // response; its scan must wait for a new explicit user action.
+      state.sessions[jobId] = epoch === acquisitionEpoch ? session :
+        {...session, user_paused: true, scan_state: 'paused'};
       state.active_job_id = jobId;
     });
+    checkIntent(epoch);
     void flush();
-    try { await scan(session, page); }
+    try { await scan(session, page, epoch); }
     catch (error) {
-      await journal.mutate(state => { state.sessions[jobId].scan_state = "error"; state.sessions[jobId].scan_error = error.message; });
+      await updateIntent(epoch, state => { state.sessions[jobId].scan_state = "error"; state.sessions[jobId].scan_error = error.message; });
     }
     return {job_id: jobId};
   }
 
   if (message.type === "pause" || message.type === "resume") {
+    if (message.type === 'pause') await cancelPendingAcquisition();
+    const epoch = message.type === 'resume' ? await acquisitionIntent(message.job_id) : null;
     const session = (await journal.load()).sessions[message.job_id];
     if (!session) throw new Error("找不到这次读取记录。");
     const resume = async () => {
-      await requireAcquisition(message.job_id);
       await flush();
-      await native.request("/v1/jobs/" + message.job_id + "/resume", {});
-      await journal.mutate(s => { s.sessions[message.job_id].user_paused = false; s.browser_error = null; s.browser_wait = null; });
+      await activate(epoch, "/v1/jobs/" + message.job_id + "/resume", {});
+      await updateIntent(epoch, s => { s.sessions[message.job_id].user_paused = false; s.browser_error = null; s.browser_wait = null; });
+      return epoch;
     };
     if (message.type === 'pause') await journal.mutate(s => { s.sessions[message.job_id].user_paused = true; });
     if (!session.finalized) {
@@ -249,8 +328,8 @@ async function handle(message, sender) {
         const page = await inspectTab(session.tab_id);
         if (page.page_key !== session.page_key || (session.view_marker && page.view_marker !== session.view_marker))
           throw new Error("请先回到同一个收藏夹。");
-        await resume();
-        await scan(session, page);
+        const epoch = await resume();
+        await scan(session, page, epoch);
       }
     } else if (message.type === "resume") await resume();
     if (message.type === "pause") await journal.push("/v1/jobs/" + message.job_id + "/pause", {}, message.job_id);
@@ -259,11 +338,12 @@ async function handle(message, sender) {
     return {};
   }
   if (message.type === "browser-start") {
+    const epoch = await acquisitionIntent(message.job_id);
     const session = (await journal.load()).sessions[message.job_id];
     if (!session) throw new Error("找不到这次读取记录。");
     await flush();
-    await native.request("/v1/jobs/" + session.job_id + "/browser", {});
-    await journal.mutate(s => {
+    await activate(epoch, "/v1/jobs/" + session.job_id + "/browser", {});
+    await updateIntent(epoch, s => {
       s.sessions[session.job_id].browser_enabled = true; s.sessions[session.job_id].user_paused = false;
       s.browser_error = null; s.browser_wait = null; s.active_job_id = session.job_id;
     });

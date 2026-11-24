@@ -1,104 +1,188 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>收藏上下文</title>
   <link rel="icon" type="image/png" href="icons/icon-32.png">
+  <link rel="stylesheet" href="vendor/daisyui/base/properties.css">
+  <link rel="stylesheet" href="vendor/daisyui/theme/light.css">
+  <link rel="stylesheet" href="vendor/daisyui/components/button.css">
+  <link rel="stylesheet" href="vendor/daisyui/components/radialprogress.css">
+  <link rel="stylesheet" href="vendor/daisyui/components/badge.css">
+  <link rel="stylesheet" href="vendor/daisyui/components/alert.css">
+  <link rel="stylesheet" href="vendor/daisyui/components/input.css">
+  <link rel="stylesheet" href="vendor/daisyui/components/checkbox.css">
+  <link rel="stylesheet" href="vendor/daisyui/components/fieldset.css">
+  <link rel="stylesheet" href="vendor/daisyui/components/label.css">
+  <link rel="stylesheet" href="vendor/daisyui/components/collapse.css">
+  <link rel="stylesheet" href="vendor/daisyui/components/card.css">
+  <link rel="stylesheet" href="vendor/daisyui/components/list.css">
+  <link rel="stylesheet" href="vendor/daisyui/components/navbar.css">
+  <link rel="stylesheet" href="vendor/daisyui/components/link.css">
   <link rel="stylesheet" href="popup.css">
 </head>
-<body>
-  <header class="app-header">
-    <img class="mark" src="icons/icon-128.png" width="36" height="36" alt="" aria-hidden="true">
-    <div class="identity"><h1>收藏上下文</h1><p>让收藏随时可用</p></div>
-    <span id="connection" class="badge" role="status">连接中</span>
+<body data-appearance="system">
+  <div id="app-content">
+  <header class="navbar app-header">
+    <img class="mark" src="icons/icon-128.png" width="28" height="28" alt="" aria-hidden="true">
+    <h1>收藏上下文</h1>
+    <span id="connection" class="badge badge-soft badge-warning" role="status">连接中</span>
+    <button id="refresh" class="btn btn-ghost quiet icon-button glass" data-icon="rotate-cw" aria-label="刷新进度"><span data-button-label class="sr-only">刷新</span></button>
   </header>
   <main>
-    <section id="setup" class="notice warning" hidden aria-labelledby="setup-title">
-      <p class="eyebrow">首次使用</p><h2 id="setup-title">连接你的本机资料库</h2>
-      <p>双击项目中的“安装.cmd”，等待安装完成。以后打开扩展会自动连接。</p>
-      <button id="reconnect">安装好了，重试</button>
+    <section id="setup" class="alert alert-soft alert-warning notice warning" hidden aria-labelledby="setup-title">
+      <h2 id="setup-title">连接本机资料库</h2>
+      <p>双击项目中的“安装.cmd”，完成后重试。</p>
+      <button id="reconnect" class="btn btn-primary">重新连接</button>
     </section>
-    <section id="activity" hidden aria-labelledby="status-title">
+    <p id="message" class="alert alert-soft alert-error" role="alert" hidden></p>
+
+    <section id="activity" hidden aria-labelledby="task-name">
       <div class="task-heading">
-        <div class="row"><p id="task-name" class="eyebrow"></p><button id="refresh" class="link small">刷新</button></div>
-        <h2 id="status-title">正在获取读取进度</h2>
+        <p class="eyebrow">收藏读取</p>
+        <div class="task-title-row"><h2 id="task-name"></h2><p id="status-title" class="task-status">正在获取进度</p></div>
       </div>
       <p id="progress" class="sr-only" role="status" aria-live="polite"></p>
-      <div class="progress-card">
+      <div class="card card-border progress-card" aria-label="读取进度">
         <div class="metric">
-          <div class="row"><span class="metric-label"><span class="step">01</span>收藏列表</span><strong id="list-value">—</strong></div>
-          <div id="list-meter" class="meter" role="progressbar" aria-label="收藏列表收集进度"><span id="list-fill"></span></div>
-          <p id="list-state" class="metric-caption">正在获取状态</p>
+          <div id="list-meter" class="radial-progress meter" data-indeterminate="true" role="progressbar" aria-label="收藏列表收集进度">
+            <span id="list-percent" class="ring-value" aria-hidden="true">—</span>
+          </div>
+          <span class="metric-label">收藏列表</span>
+          <strong id="list-value">—</strong>
+          <p id="list-state" class="metric-caption">获取中</p>
         </div>
         <div class="metric">
-          <div class="row"><span class="metric-label"><span class="step">02</span>正文保存</span><strong id="body-value">—</strong></div>
-          <div id="body-meter" class="meter" role="progressbar" aria-label="已发现笔记的正文保存进度"><span id="body-fill"></span></div>
-          <p id="body-state" class="metric-caption">以已发现笔记为基准</p>
+          <div id="body-meter" class="radial-progress meter" data-indeterminate="true" role="progressbar" aria-label="已发现笔记的正文保存进度">
+            <span id="body-percent" class="ring-value" aria-hidden="true">—</span>
+          </div>
+          <span class="metric-label">正文保存</span>
+          <strong id="body-value">—</strong>
+          <p id="body-state" class="metric-caption">已发现的笔记</p>
         </div>
       </div>
       <p id="action-note" class="context-note"></p>
-      <div id="end-check" class="notice warning" hidden>
-        <strong>列表还没有确认收齐</strong>
-        <p>页面暂时没有更多内容。回到收藏页核对后，可以确认末尾，也可以先保存已读内容。</p>
-        <button id="finish">确认已到末尾</button>
-        <button id="partial" class="link">先保存已读内容</button>
+      <div id="end-check" class="alert alert-soft alert-warning notice warning" hidden>
+        <strong class="sr-only">确认收藏列表末尾</strong>
+        <p>请回收藏页核对，再确认或保存已读内容。</p>
+        <button id="finish" class="btn btn-primary">确认已到末尾</button>
+        <div id="verification-options">
+          <button id="partial" class="btn btn-ghost quiet" title="先保存已读内容" aria-label="先保存已读内容">先保存已读</button>
+        </div>
       </div>
-      <div id="browser-help" class="notice" hidden>
-        <strong id="recovery-title">补全未完成正文</strong>
-        <p>扩展会逐篇打开后台笔记页，读取后关闭；不导出 Cookie。遇到登录或验证提示会暂停。</p>
-        <button id="browser-start">用浏览器补全正文</button>
+      <div id="task-actions" class="buttons">
+        <button id="pause" class="btn secondary" data-icon="pause" hidden><span data-button-label>暂停读取</span></button>
+        <button id="resume" class="btn btn-primary" data-icon="play" hidden><span data-button-label>继续读取</span></button>
       </div>
-      <div class="buttons">
-        <button id="pause" class="secondary" hidden>暂停读取</button>
-        <button id="resume" hidden>继续读取</button>
-      </div>
-      <div class="source-row"><button id="open-source" class="link">打开收藏页 <span aria-hidden="true">↗</span></button></div>
-      <details id="task-details">
-        <summary id="detail-summary">读取详情</summary>
-        <p id="detail" class="hint"></p><p id="failure-reason" hidden></p>
-      </details>
     </section>
+
     <section id="target-card" aria-labelledby="folder">
       <div class="target-meta">
-        <p class="eyebrow">当前收藏夹</p><h2 id="folder">正在识别…</h2>
-        <p id="scope" class="hint">打开小红书的收藏列表即可读取。</p>
+        <p id="target-label" class="eyebrow">当前收藏夹</p><h2 id="folder">正在识别…</h2>
+        <p id="scope" class="hint">打开小红书收藏列表即可读取。</p>
       </div>
-      <div id="ready-guide" class="ready-guide">
-        <strong>把收藏变成可用的资料</strong>
-        <p>自动读取列表，保存笔记正文和原文链接，随后可交给 Agent 搜索和引用。</p>
-      </div>
-      <label id="confirmation" class="check" hidden><input id="confirmed" type="checkbox">这是我要读取的收藏列表</label>
-      <button id="start" disabled>读取当前收藏夹</button>
-      <button id="inspect" class="secondary" hidden>刷新页面识别</button>
-      <p class="hint footnote">关闭面板也会继续读取。<br>列表读取时，请保留原收藏标签页。</p>
+      <label id="confirmation" class="label alert alert-soft alert-warning check" hidden><input id="confirmed" type="checkbox" class="checkbox checkbox-primary checkbox-sm"><span>确认读取当前收藏列表</span></label>
+      <button id="start" class="btn btn-primary" data-icon="play" disabled><span data-button-label>开始读取</span></button>
+      <button id="inspect" class="btn secondary" hidden>刷新页面识别</button>
+      <p id="target-footnote" class="hint footnote">关闭面板可继续，请保留收藏页。</p>
     </section>
-    <section id="image-card" hidden aria-labelledby="image-title">
-      <p class="eyebrow">独立补充图片</p>
-      <h2 id="image-title">图片与正文分开保存</h2>
-      <p id="image-progress" class="hint" role="status" aria-live="polite"></p>
-      <button id="images-current" class="secondary" hidden>保存当前笔记图片</button>
-      <button id="images-collection" class="secondary" hidden>补充本地收藏夹图片</button>
-      <div class="actions">
-        <button id="images-pause" class="secondary" hidden>暂停补图</button>
-        <button id="images-resume" class="secondary" hidden>继续 / 重试补图</button>
-      </div>
-      <p id="image-detail" class="hint"></p>
-      <p class="hint footnote">只保存图片，暂不做 OCR。无法取得图片列表时，可打开笔记页单独保存；仍受平台访问限制。</p>
+
+    <div id="browser-help" class="alert alert-soft notice" hidden>
+      <strong id="recovery-title">补全未完成正文</strong>
+      <p class="sr-only">补全时会打开后台笔记页，遇到登录或验证会暂停。</p>
+    </div>
+    <section id="quick-actions" class="quick-actions" aria-label="常用功能">
+      <p class="section-label">常用操作</p>
+      <button id="open-source" class="btn secondary" data-icon="external-link" hidden><span data-button-label>打开收藏页</span></button>
+      <button id="browser-start" class="btn secondary" data-icon="file-text" hidden><span data-button-label>补全正文</span></button>
+      <button id="images-current" class="btn secondary" data-icon="image" hidden><span data-button-label>当前笔记图片</span></button>
+      <button id="images-collection" class="btn secondary" data-icon="images" hidden><span data-button-label>收藏夹图片</span></button>
     </section>
-    <details id="advanced">
-      <summary>修正名称与总数</summary>
-      <label for="name">本地名称 <span class="hint">默认跟随页面</span></label>
-      <input id="name" maxlength="200" placeholder="自动识别" autocomplete="off">
-      <label for="expected">已核对总数 <span class="hint">可留空</span></label>
-      <input id="expected" type="number" min="0" max="100000" step="1" placeholder="未知则不设置总数">
-      <p class="hint">仅在识别有误时修正。列表收齐和正文保存会分别报告。</p>
-      <p class="font-credit">界面使用 MiSans 字体 · <a href="fonts/MiSans-license.pdf" target="_blank" rel="noopener">许可说明</a></p>
+
+    <section id="image-card" class="card card-sm" hidden aria-labelledby="image-title">
+      <div class="card-body">
+        <div class="row image-heading">
+          <div class="image-summary"><h2 id="image-title">图片任务</h2><p id="image-progress" role="status" aria-live="polite"></p></div>
+          <div class="actions">
+            <button id="images-pause" class="btn btn-ghost quiet small" hidden>暂停补图</button>
+            <button id="images-resume" class="btn btn-ghost quiet small" hidden>继续补图</button>
+          </div>
+        </div>
+        <p id="image-stage" class="hint"></p>
+        <details id="image-details" class="collapse collapse-arrow">
+          <summary class="collapse-title">图片详情</summary>
+          <div class="collapse-content"><p id="image-detail" class="hint"></p></div>
+        </details>
+      </div>
+    </section>
+
+    <details id="task-details" class="collapse collapse-arrow" hidden>
+      <summary id="detail-summary" class="collapse-title">读取详情</summary>
+      <div class="collapse-content"><p id="detail" class="hint"></p><p id="failure-reason" hidden></p></div>
     </details>
-    <p id="message" role="alert" hidden></p>
+    <details id="invalid-notes" class="collapse collapse-arrow" hidden>
+      <summary id="invalid-summary" class="collapse-title">失效列表</summary>
+      <div class="collapse-content">
+        <p class="hint">已确认失效的笔记不再重复读取，之前保存的正文仍保留。</p>
+        <ul id="invalid-items" class="list"></ul>
+        <p id="invalid-status" class="hint" role="status"></p>
+        <button id="invalid-more" class="btn btn-ghost quiet" hidden>加载更多</button>
+      </div>
+    </details>
+    <details id="advanced" class="collapse collapse-arrow" hidden>
+      <summary class="collapse-title">名称与总数</summary>
+      <div class="collapse-content">
+        <fieldset class="fieldset" aria-label="读取设置">
+          <label class="label" for="name">本地名称 <span class="hint">默认跟随页面</span></label>
+          <input id="name" class="input" type="text" maxlength="200" placeholder="自动识别" autocomplete="off">
+          <label class="label" for="expected">已核对总数 <span class="hint">可留空</span></label>
+          <input id="expected" class="input" type="number" min="0" max="100000" step="1" placeholder="总数未知则留空" aria-describedby="settings-hint">
+          <p id="settings-hint" class="hint">仅在识别有误时修正，开始读取后生效。</p>
+        </fieldset>
+      </div>
+    </details>
+    <section id="help-panel" class="card card-border card-sm" hidden aria-labelledby="help-title" tabindex="-1">
+      <div class="card-body">
+        <h2 id="help-title" class="card-title">使用帮助</h2>
+        <p>读取收藏列表与笔记正文到本机，供 Agent 搜索和引用。关闭面板可继续，读取列表时请保留收藏页。</p>
+        <p>正文与图片单独保存；图片按需补充，暂不处理 OCR 和视频。补全正文会打开后台笔记页，不导出 Cookie。</p>
+        <p>当前笔记图片只读取页面已加载的图片区域；无法取得图片列表时，请打开笔记详情查看图片。</p>
+        <p class="font-credit">MiSans 字体 · <a class="link link-primary link-hover" href="fonts/MiSans-license.pdf" target="_blank" rel="noopener">许可说明</a></p>
+        <p class="font-credit">daisyUI 组件 · <a class="link link-primary link-hover" href="vendor/daisyui/LICENSE" target="_blank" rel="noopener">MIT 许可</a></p>
+        <p class="font-credit">Lucide 图标 · <a class="link link-primary link-hover" href="vendor/lucide/LICENSE" target="_blank" rel="noopener">许可说明</a></p>
+        <fieldset class="appearance-settings fieldset" aria-labelledby="appearance-title">
+          <legend id="appearance-title">外观</legend>
+          <div class="appearance-options" aria-label="选择外观">
+            <button type="button" class="btn quiet" data-appearance-choice="system" aria-pressed="true">跟随系统</button>
+            <button type="button" class="btn quiet" data-appearance-choice="light" aria-pressed="false">浅色</button>
+            <button type="button" class="btn quiet" data-appearance-choice="dark" aria-pressed="false">深色</button>
+          </div>
+          <label class="preference-row" for="glass-opacity">玻璃浓度 <output id="glass-opacity-value" for="glass-opacity">72%</output></label>
+          <input id="glass-opacity" type="range" min="40" max="100" value="72" aria-label="玻璃浓度">
+          <label class="preference-row" for="reduce-effects">减少动态效果<input id="reduce-effects" class="checkbox checkbox-primary checkbox-sm" type="checkbox"></label>
+        </fieldset>
+      </div>
+    </section>
   </main>
-  <footer>正文先读，图片按需补充 <span aria-hidden="true">·</span> OCR / 视频暂不处理</footer>
+  <div class="toolbar-edge" aria-hidden="true"></div>
+  <footer class="navbar toolbar glass" aria-label="面板工具">
+    <button id="details-toggle" class="btn btn-ghost quiet" data-icon="info" aria-controls="task-details" aria-expanded="false"><span data-button-label>读取详情</span></button>
+    <button id="settings-toggle" class="btn btn-ghost quiet" data-icon="settings-2" aria-controls="advanced" aria-expanded="false" title="识别收藏列表后可修正名称与总数"><span data-button-label>设置</span></button>
+    <button id="help-toggle" class="btn btn-ghost quiet" data-icon="circle-help" aria-controls="help-panel" aria-expanded="false"><span data-button-label>帮助</span></button>
+  </footer>
+  </div>
+  <div id="sheet-layer" hidden>
+    <div id="sheet-backdrop" aria-hidden="true"></div>
+    <section id="sheet" class="glass" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1">
+      <header class="sheet-header"><h2 id="sheet-title"></h2><button id="sheet-close" class="btn btn-ghost quiet icon-button" data-icon="x" aria-label="关闭面板"><span data-button-label class="sr-only">关闭面板</span></button></header>
+      <div id="sheet-content"></div>
+      <p id="sheet-error" class="hint" role="alert" hidden></p>
+      <div class="sheet-footer"><button id="sheet-done" class="btn btn-primary">完成</button></div>
+    </section>
+  </div>
+  <script src="vendor/lucide/icons.js"></script>
+  <script src="popup-view.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
-

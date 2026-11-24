@@ -174,7 +174,9 @@ def resolve_card(store, card, fetcher, ocr=None, stop=None, *, media=False):
         note = dict(card["browser_snapshot"])
     else:
         raw, mime, final_url = fetcher.get(card["source_url"])
-        note = parse_note(raw.decode("utf-8", errors="replace"), card["note_id"], card["source_url"])
+        from .network import validate_note_response
+        validate_note_response(final_url, card["note_id"])
+        note = parse_note(raw.decode("utf-8", errors="replace"), card["note_id"], final_url)
         note["raw_object"] = store.put_object(raw, ".bin")
     if not media:
         return finish_body(note)
@@ -199,7 +201,7 @@ def resolve_card(store, card, fetcher, ocr=None, stop=None, *, media=False):
                 result = store_image(store, data, asset, ocr)
             downloaded.append(result)
         except XhsError as exc:
-            if exc.code in {"RATE_LIMITED", "ACCESS_BLOCKED", "PROXY_ERROR", "PROXY_CONFIGURATION", "LOCAL_NETWORK_BLOCKED"}:
+            if exc.code in {"ACCESS_RESTRICTED", "RATE_LIMITED", "ACCESS_BLOCKED", "PROXY_ERROR", "PROXY_CONFIGURATION", "LOCAL_NETWORK_BLOCKED"}:
                 raise
             downloaded.append(dict(asset, state="failed", error=exc.code, ocr_state="not_ready"))
     note["images"] = downloaded

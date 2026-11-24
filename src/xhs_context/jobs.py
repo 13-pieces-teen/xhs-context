@@ -6,8 +6,10 @@ from datetime import datetime, timedelta, timezone
 from .common import XhsError, digest, fields, integer, now, safe_id, text_field, dumps
 from .network import validate_note_url, validate_page_url
 from .access import access_restriction, require_access
+from .invalid_sources import INVALID_SOURCE_ERRORS, backfill_invalid_items, invalid_source, skip_invalid_items
 
 SCAN_TAKEOVER_SECONDS = 30 * 60
+SKIPPED_SOURCE_ERRORS = INVALID_SOURCE_ERRORS
 
 
 def validate_collection(value):
@@ -108,6 +110,7 @@ def receive_batch(store, job_id, request):
         if job["scan_state"] != "scanning":
             raise XhsError("SCAN_FINALIZED", "This scan is finalized; start a new job")
         membership_changed = False
+        skip_invalid_items(db)
         for item in items:
             store.note_row(db, item)
             current = db.execute("SELECT current_revision FROM notes WHERE id=?", (item["note_id"],)).fetchone()
@@ -121,9 +124,11 @@ def receive_batch(store, job_id, request):
             db.execute("INSERT INTO memberships VALUES (?,?,'present',0,?) ON CONFLICT(collection_id,note_id) "
                        "DO UPDATE SET state='present',miss_count=0,last_seen_job=excluded.last_seen_job",
                        (job["collection_id"], item["note_id"], job_id))
-            db.execute("INSERT INTO job_items(job_id,note_id,payload,updated_at) VALUES (?,?,?,?) "
+            invalid = invalid_source(db, item["note_id"])
+            db.execute("INSERT INTO job_items(job_id,note_id,payload,updated_at,state,error) VALUES (?,?,?,?,?,?) "
                        "ON CONFLICT(job_id,note_id) DO NOTHING",
-                       (job_id, item["note_id"], dumps(item), now()))
+                       (job_id, item["note_id"], dumps(item), now(),
+                        "skipped" if invalid else "queued", invalid["error"] if invalid else None))
         db.execute("INSERT INTO batches VALUES (?,?,?,?)", (job_id, seq, batch_hash, len(items)))
         db.execute("UPDATE jobs SET received_batches=received_batches+1,updated_at=? WHERE id=?", (now(), job_id))
         if membership_changed:
@@ -163,6 +168,11 @@ def finish_scan(store, job_id, request):
             "expected_count": job["expected_count"], "end_evidence": evidence}
 
 
+def skip_unavailable_items(db, job_id):
+    """Retain source failures from older versions without retrying them."""
+    backfill_invalid_items(db, job_id)
+
+
 def set_job_state(store, job_id, state, retry_failed=False):
     from .browser_retry import RETRYABLE
     with store.write() as db:
@@ -173,12 +183,16 @@ def set_job_state(store, job_id, state, retry_failed=False):
             raise XhsError("JOB_NOT_FOUND", "Unknown job")
         db.execute("UPDATE jobs SET state=?,error=CASE WHEN ?='active' THEN NULL ELSE error END,updated_at=? WHERE id=?",
                    (state, state, now(), job_id))
+        if state == "active":
+            skip_unavailable_items(db, job_id)
         if retry_failed:
             # Explicit continuation releases an abandoned page from a paused task.
             if previous['state'] == 'paused':
                 db.execute("UPDATE job_items SET state='queued',attempts=MAX(0,attempts-1),error=NULL,"
                            "payload=json_set(json_remove(payload,'$.browser_lease'),'$.browser_retry_at',0) WHERE job_id=? AND state='browser_running'", (job_id,))
-            for code in RETRYABLE:
+            # A user-requested attempt after refreshing the local guard gets a
+            # new budget, even if previous platform restrictions used all three.
+            for code in RETRYABLE | {"ACCESS_RESTRICTED", "RATE_LIMITED"}:
                 db.execute("UPDATE job_items SET state='queued',attempts=0,error=NULL,"
                            "payload=json_set(json_remove(payload,'$.browser_lease'),'$.browser_retry_at',0) WHERE job_id=? AND state='failed' AND error=?", (job_id, code))
             db.execute("UPDATE job_items SET payload=json_set(payload,'$.browser_retry_at',0) WHERE job_id=? "
@@ -206,6 +220,9 @@ def job_report(db, job_id):
     result["list_complete"] = row["scan_state"] == "complete"
     result["content_scope"] = "body"
     result["body_complete"] = result["list_complete"] and counts.get("ready", 0) == result["discovered"]
+    result["skipped_count"] = counts.get("skipped", 0)
+    result["read_complete"] = result["list_complete"] and (
+        counts.get("ready", 0) + result["skipped_count"] == result["discovered"])
     # Whole-note coverage still includes media. Body-only success must not claim it.
     archived = db.execute("SELECT count(*) FROM job_items i JOIN notes n ON n.id=i.note_id "
                           "JOIN revisions r ON r.id=n.current_revision WHERE i.job_id=? "
@@ -218,6 +235,9 @@ def job_report(db, job_id):
     result["failure_summary"] = [dict(r) for r in db.execute(
         "SELECT error,count(*) AS count FROM job_items WHERE job_id=? AND state IN ('failed','partial') "
         "AND error IS NOT NULL GROUP BY error ORDER BY count(*) DESC LIMIT 8", (job_id,))]
+    result["skipped_summary"] = [dict(r) for r in db.execute(
+        "SELECT error,count(*) AS count FROM job_items WHERE job_id=? AND state='skipped' "
+        "AND error IS NOT NULL GROUP BY error ORDER BY count(*) DESC,error LIMIT 8", (job_id,))]
     result["failures"] = [dict(r) for r in db.execute(
         "SELECT note_id,state,attempts,error FROM job_items WHERE job_id=? AND error IS NOT NULL LIMIT 50",
         (job_id,))]

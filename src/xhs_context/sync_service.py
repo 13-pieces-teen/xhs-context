@@ -6,13 +6,13 @@ import sys
 import threading
 from urllib.parse import parse_qs, urlsplit
 
-from .common import XhsError, envelope
+from .common import XhsError, envelope, fields
 from .core import status
 from .exports import ExportScheduler
 from .jobs import create_job, finish_scan, receive_batch, set_job_state
 from .worker import Worker, sync_lock
-from .browser_import import enable_browser, next_page, accept_page
-from .access import report_restriction
+from .browser_import import enable_browser, next_page, check_page, accept_page
+from .access import refresh_access, report_restriction
 from .image_jobs import create_image_job, image_report, set_image_state
 from .images import ImageWorker
 
@@ -25,20 +25,48 @@ def dispatch_sync(store, path, body=None):
         raise XhsError("INVALID_ARGUMENT", "Use a local operation path", exit_code=2)
     if body is None and parsed.path == "/v1/status":
         return status(store, parse_qs(parsed.query).get("job_id", [None])[0])
-    image_route = re.fullmatch(r'/v1/image-jobs/([A-Za-z0-9_-]{1,100})(?:/(pause|resume))?', parsed.path)
+    if body is None and parsed.path == '/v1/invalid-notes':
+        from .invalid_sources import invalid_report
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        if set(query) - {'limit', 'offset'} or any(len(values) != 1 for values in query.values()):
+            raise XhsError('INVALID_ARGUMENT', 'Use a single limit and offset', exit_code=2)
+        try:
+            limit, offset = int(query.get('limit', ['50'])[0]), int(query.get('offset', ['0'])[0])
+        except ValueError:
+            raise XhsError('INVALID_ARGUMENT', 'limit and offset must be integers', exit_code=2) from None
+        with store.read() as db:
+            return envelope(invalid_report(db, limit=limit, offset=offset))
+    image_route = re.fullmatch(r'/v1/image-jobs/([A-Za-z0-9_-]{1,100})(?:/(pause|resume|browser|browser-result))?', parsed.path)
     if body is None and image_route and not image_route[2]:
         with store.read() as db:
-            return envelope(image_report(db, image_route[1]))
+            return envelope(image_report(db, image_route[1], store=store))
     if body is None:
         raise XhsError("NOT_FOUND", "Unknown local operation")
     if parsed.path == "/v1/access/restrict":
         return envelope(report_restriction(store, body))
+    if parsed.path == "/v1/access/refresh":
+        return envelope(refresh_access(store, body))
     if parsed.path == '/v1/image-jobs':
         return envelope(create_image_job(store, body))
     if image_route and image_route[2]:
+        if image_route[2] == 'browser-result':
+            from .image_browser import accept_image_page
+            return envelope(accept_image_page(store, image_route[1], body))
+        if image_route[2] == 'browser':
+            from .image_browser import enable_image_browser
+            fields(body, set())
+            return envelope(enable_image_browser(store, image_route[1]))
         return envelope(set_image_state(store, image_route[1], 'paused' if image_route[2] == 'pause' else 'active'))
     if parsed.path == "/v1/browser/next":
         return envelope(next_page(store))
+    if parsed.path == "/v1/browser/check":
+        fields(body, {'kind', 'job_id', 'note_id', 'lease_id'}, {'job_id', 'note_id', 'lease_id'})
+        if body.get('kind') == 'images':
+            from .image_browser import check_image_page
+            return envelope(check_image_page(store, {key: value for key, value in body.items() if key != 'kind'}))
+        if 'kind' in body:
+            raise XhsError('INVALID_ARGUMENT', 'Unknown browser task kind', exit_code=2)
+        return envelope(check_page(store, body))
     if parsed.path == "/v1/jobs":
         return envelope(create_job(store, body))
     match = re.fullmatch(r"/v1/jobs/([A-Za-z0-9_-]{1,100})/(batches|finish|pause|resume|browser|browser-result)", parsed.path)

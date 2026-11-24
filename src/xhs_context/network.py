@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 from .common import XhsError
 
 PAGE_HOSTS = {"www.xiaohongshu.com", "xiaohongshu.com", "m.xiaohongshu.com"}
+NOTE_PATH = re.compile(r"/(?:explore|discovery/item|user/profile/[0-9a-fA-F]{24})/([0-9a-fA-F]{24})/?")
 
 
 def validate_url(url, *, media=False):
@@ -31,10 +32,20 @@ def validate_page_url(url):
 
 def validate_note_url(url, note_id):
     parsed = validate_url(url)
-    match = re.fullmatch(r"/(?:explore|discovery/item|user/profile/[0-9a-fA-F]{24})/([0-9a-fA-F]{24})/?", parsed.path)
+    match = NOTE_PATH.fullmatch(parsed.path)
     if not match or match.group(1).lower() != note_id.lower():
         raise XhsError("URL_NOTE_MISMATCH", "The actual note URL must match its note_id", exit_code=2)
     return parsed
+
+
+def validate_note_response(url, note_id):
+    """A response from another page cannot establish this note's disappearance."""
+    try:
+        return validate_note_url(url, note_id)
+    except XhsError as exc:
+        if exc.code != "URL_NOTE_MISMATCH":
+            raise
+        raise XhsError("NOTE_NOT_FOUND", "The response no longer belongs to the requested note", exit_code=5) from None
 
 
 def public_addresses(host):
@@ -76,6 +87,8 @@ class AnonymousFetcher:
     def get(self, url, *, media=False):
         import httpx
         limit = 25 * 1024 * 1024 if media else 5 * 1024 * 1024
+        initial = validate_url(url, media=media)
+        requested = NOTE_PATH.fullmatch(initial.path) if not media else None
         for redirect in range(4):
             parsed = validate_url(url, media=media)
             if parsed.path.rstrip("/") == "/website-login/error":
@@ -84,6 +97,8 @@ class AnonymousFetcher:
                 raise XhsError(reason, "The source redirected to an access error page", exit_code=5)
             if parsed.path.rstrip("/") in {"/login", "/signin"} or parsed.path.startswith("/website-login/"):
                 raise XhsError("ACCESS_BLOCKED", "The source redirected to a login page", exit_code=5)
+            if requested:
+                validate_note_response(url, requested[1])
             proxy = proxy_for(parsed.hostname)
             if proxy is None:
                 public_addresses(parsed.hostname)

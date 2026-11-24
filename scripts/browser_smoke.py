@@ -47,6 +47,8 @@ class FixtureTransport:
             with (work / 'media-requests.log').open('a', encoding='utf-8') as f:
                 f.write(url + '\\n')
             return (work / 'fixture-image.png').read_bytes(), 'image/png', url
+        with (work / 'note-requests.log').open('a', encoding='utf-8') as f:
+            f.write(url + '\\n')
         identifier = url.split('?')[0].rstrip('/').split('/')[-1]
         if int(identifier, 16) >= 9000:
             raise XhsError('ACCESS_BLOCKED', 'Synthetic login wall')
@@ -127,6 +129,11 @@ def main():
     executable = os.environ.get("XHS_TEST_CHROMIUM") or (str(candidates[0]) if candidates else None)
     errors = []
     restriction_requests = []
+    recovered_requests = []
+    missing_note_requests = []
+    missing_note_id = None
+    missing_scan_round = 0
+    restriction_active = True
     report = {"live_xhs": "NOT_RUN", "dataset": "synthetic_profile_favorites",
               "transport": "real_native_messaging", "expected_count": 60, "manual_pairing": False}
     try:
@@ -138,15 +145,27 @@ def main():
             try:
                 fixture = (ROOT / "tests/fixtures/profile-favorites.html").read_text(encoding="utf-8")
                 def route_request(route):
+                    nonlocal missing_note_id
                     url = route.request.url
                     if url.startswith("https://www.xiaohongshu.com/"):
                         if len(urlsplit(url).path.split('/')) == 5 and '/user/profile/' in url:
                             identifier = int(urlsplit(url).path.split('/')[-1], 16)
-                            if identifier >= 9100:
-                                restriction_requests.append(identifier)
-                                route.fulfill(status=200, content_type="text/html",
-                                              path=str(ROOT / "tests/fixtures/access-restricted.html"))
-                                return
+                            if 9200 <= identifier < 9203:
+                                missing_note_requests.append(identifier)
+                                if missing_note_id is None:
+                                    missing_note_id = identifier
+                                if identifier == missing_note_id:
+                                    route.fulfill(status=200, content_type="text/html; charset=utf-8", body='''<!doctype html>
+                                        <html lang="zh-CN"><meta charset="utf-8"><body><main><h1>找不到对应的笔记</h1>
+                                        <p>这篇笔记已无法访问</p><button>返回首页</button></main></body></html>''')
+                                    return
+                            if 9100 <= identifier < 9103:
+                                if restriction_active:
+                                    restriction_requests.append(identifier)
+                                    route.fulfill(status=200, content_type="text/html",
+                                                  path=str(ROOT / "tests/fixtures/access-restricted.html"))
+                                    return
+                                recovered_requests.append(identifier)
                             note_html = '''<!doctype html><html><body>
                                 <div id="noteContainer"><h1 id="detail-title">合成浏览器笔记</h1>
                                 <div id="detail-desc">浏览器正文：容器与基础设施入门。合成测试数据。</div>
@@ -164,6 +183,10 @@ def main():
                         if "folder_id=restricted" in url:
                             body = body.replace('笔记・60', '笔记・3').replace('Math.min(60,', 'Math.min(3,')
                             body = body.replace('end===60', 'end===3').replace('(i+1000)', '(i+9100)')
+                        if "folder_id=missing" in url:
+                            body = body.replace('笔记・60', '笔记・3').replace('Math.min(60,', 'Math.min(3,')
+                            body = body.replace('end===60', 'end===3').replace('(i+1000)', '(i+9200)')
+                            body = body.replace('fixture-only', f'fixture-missing-{missing_scan_round}')
                         if "tab=posts" in url:
                             body = body.replace('class="reds-tab-item active sub-tab-list" data-fixture="saved"', 'class="reds-tab-item sub-tab-list" data-fixture="saved"')
                             body = body.replace('class="reds-tab-item sub-tab-list" data-fixture="posts"', 'class="reds-tab-item active sub-tab-list" data-fixture="posts"')
@@ -192,13 +215,14 @@ def main():
                     "panes => panes.map(p => p.getBoundingClientRect().height)")
                 assert collapsed_heights and all(height == 1 for height in collapsed_heights)
 
-                def open_popup(front=None):
+                def open_popup(front=None, *, refresh=True):
                     popup = context.new_page()
                     popup.on("pageerror", lambda error: errors.append(str(error)))
                     popup.goto("chrome-extension://" + ext_id + "/popup.html")
                     popup.wait_for_load_state("networkidle")
                     (front or target).bring_to_front()
-                    popup.locator("#refresh").evaluate("(e)=>e.click()")
+                    if refresh:
+                        popup.locator("#refresh").evaluate("(e)=>e.click()")
                     return popup
 
                 popup = open_popup()
@@ -209,7 +233,7 @@ def main():
                 popup.locator("#reconnect").evaluate("(e)=>e.click()")
                 expect(popup.locator("#start")).to_be_enabled(timeout=20000)
                 expect(popup.locator("#folder")).to_have_text("收藏 · 笔记")
-                expect(popup.locator("#scope")).to_have_text("页面显示 60 篇笔记")
+                expect(popup.locator("#scope")).to_have_text("60 篇笔记")
                 expect(popup.locator("#name")).to_have_value("")
                 expect(popup.locator("#expected")).to_have_value("")
                 expect(popup.locator("#confirmation")).to_be_hidden()
@@ -265,10 +289,10 @@ def main():
                 report["pause_resume_and_popup_close"] = "PASS"
                 report["progress_pause_resume_from_other_page"] = "PASS"
                 popup = open_popup(other)
-                expect(popup.locator("#status-title")).to_have_text("正文已读完，可供 Agent 使用", timeout=15000)
+                expect(popup.locator("#status-title")).to_have_text("正文已保存", timeout=15000)
                 popup.locator("#open-source").evaluate("(e)=>e.click()")
                 expect(popup.locator("#target-card")).to_be_visible()
-                expect(popup.locator("#start")).to_have_text("更新当前收藏夹")
+                expect(popup.locator("#start")).to_have_text("更新收藏")
                 report["popup_text"] = popup.locator("#activity").inner_text()
                 popup.locator("body").screenshot(path=str(OUT / "extension-popup.png"))
 
@@ -299,7 +323,7 @@ def main():
                 assert unknown["discovered"] == 60 and not unknown["list_complete"]
                 popup.locator("body").screenshot(path=str(OUT / "extension-unconfirmed.png"))
                 popup.locator("#partial").evaluate("(e)=>e.click()")
-                expect(popup.locator("#status-title")).to_have_text("已读笔记正文已保存", timeout=15000)
+                expect(popup.locator("#status-title")).to_have_text("已读正文已保存", timeout=15000)
                 assert status(store, unknown["id"])["data"]["job"]["scan_state"] == "partial"
                 report["unknown_end_keeps_partial"] = "PASS"
 
@@ -310,10 +334,12 @@ def main():
                 expect(popup.locator("#start")).to_be_enabled()
                 popup.locator("#start").evaluate("(e)=>e.click()")
                 expect(popup.locator("#status-title")).to_have_text("已暂停", timeout=15000)
+                popup.locator("#details-toggle").evaluate("(e)=>e.click()")
+                expect(popup.locator("#failure-reason")).to_be_visible()
                 expect(popup.locator("#failure-reason")).to_contain_text("登录或验证")
                 popup.close()
                 popup = open_popup(other)
-                expect(popup.locator("#browser-start")).to_be_visible()
+                expect(popup.locator("#browser-start")).to_be_enabled()
                 # tabs.create's first navigation can precede Playwright's target
                 # attachment. Allocate a real inactive tab, then navigate through
                 # the attached Page so all test traffic stays inside our routes.
@@ -345,10 +371,10 @@ def main():
                 context.on("page", navigate_fixture)
                 popup.locator("#browser-start").evaluate("(e)=>e.click()")
                 expect(popup.locator("#browser-help")).to_be_hidden()
-                expect(popup.locator("#status-title")).to_have_text("暂时中断，将自动继续", timeout=10000)
+                expect(popup.locator("#status-title")).to_have_text("等待自动重试", timeout=10000)
                 expect(popup.locator("#action-note")).to_contain_text("自动重试")
                 expect(popup.locator("#pause")).to_be_visible()
-                expect(popup.locator("#status-title")).to_have_text("正文已读完，可供 Agent 使用", timeout=60000)
+                expect(popup.locator("#status-title")).to_have_text("正文已保存", timeout=60000)
                 assert sw.evaluate('fixtureCreates') == 4  # One failed create, three actual pages; lost ACK opens none.
                 report['temporary_tab_busy_and_lost_ack_auto_recovery'] = 'PASS'
                 expect(popup.locator("#progress")).to_contain_text("正文已保存 3 篇")
@@ -378,12 +404,12 @@ def main():
                 expect(popup.locator("#start")).to_be_enabled()
                 popup.locator("#start").evaluate("(e)=>e.click()")
                 expect(popup.locator("#status-title")).to_have_text("已暂停", timeout=15000)
-                expect(popup.locator("#browser-start")).to_be_visible()
+                expect(popup.locator("#browser-start")).to_be_enabled()
                 other.bring_to_front()
                 popup.locator("#browser-start").evaluate("(e)=>e.click()")
-                expect(popup.locator("#status-title")).to_have_text("访问受限，自动读取已停止", timeout=15000)
+                expect(popup.locator("#status-title")).to_have_text("访问受限", timeout=15000)
                 expect(popup.locator("#resume")).to_be_disabled()
-                expect(popup.locator("#message")).to_contain_text("300013")
+                expect(popup.locator("#message")).to_contain_text("访问受限")
                 # A forged control message cannot bypass the disabled UI.
                 rejected = popup.evaluate("""async () => {
                     const state = await chrome.runtime.sendMessage({type:'state'});
@@ -397,7 +423,138 @@ def main():
                 assert all(job["state"] == "paused" for job in locked_status["recent_jobs"])
                 popup.locator("body").screenshot(path=str(OUT / "extension-security-restriction.png"))
                 report["security_restriction_stops_all_jobs_and_disables_resume"] = "PASS"
+                # Reopening the panel and its automatic status polling must keep
+                # the stop guard. Only the explicit Refresh action resets it.
+                context.remove_listener("page", navigate_fixture)
+                popup.close()
+                popup = open_popup(other, refresh=False)
+                context.on("page", navigate_fixture)
+                expect(popup.locator("#status-title")).to_have_text("访问受限", timeout=15000)
+                popup.wait_for_timeout(5500)
+                expect(popup.locator("#resume")).to_be_disabled()
+                assert len(restriction_requests) == 1
+                assert status(store)["data"]["access_restriction"]["site_code"] == "300013"
+                report["panel_reopen_and_poll_preserve_restriction"] = "PASS"
+
+                popup.locator("#refresh").evaluate("(e)=>e.click()")
+                expect(popup.locator("#resume")).to_be_enabled(timeout=15000)
+                expect(popup.locator("#status-title")).to_have_text("已暂停")
+                expect(popup.locator("#message")).to_contain_text("可手动继续读取")
+                popup.wait_for_timeout(5500)
+                refreshed_status = status(store)["data"]
+                assert not refreshed_status["access_restriction"]
+                assert all(job["state"] == "paused" for job in refreshed_status["recent_jobs"])
+                assert len(restriction_requests) == 1
+                report["manual_refresh_enables_resume_without_reading"] = "PASS"
+
+                popup.locator("#resume").evaluate("(e)=>e.click()")
+                expect(popup.locator("#status-title")).to_have_text("访问受限", timeout=15000)
+                expect(popup.locator("#resume")).to_be_disabled()
+                popup.wait_for_timeout(5500)
+                assert len(restriction_requests) == 2
+                assert status(store)["data"]["access_restriction"]["site_code"] == "300013"
+                report["still_restricted_manual_retry_pauses_again"] = "PASS"
+
+                popup.locator("#refresh").evaluate("(e)=>e.click()")
+                expect(popup.locator("#resume")).to_be_enabled(timeout=15000)
+                restriction_active = False
+                popup.wait_for_timeout(5500)
+                assert not recovered_requests and len(restriction_requests) == 2
+                popup.locator("#resume").evaluate("(e)=>e.click()")
+                expect(popup.locator("#status-title")).to_have_text("正文已保存", timeout=30000)
+                expect(popup.locator("#progress")).to_contain_text("正文已保存 3 篇")
+                assert not status(store)["data"]["access_restriction"]
+                assert sorted(recovered_requests) == list(range(9100, 9103))
+                popup.locator("body").screenshot(path=str(OUT / "extension-security-recovered.png"))
+                report["restored_access_manual_retry_completes"] = "PASS"
                 report["restriction_fixture_note_requests"] = restriction_requests
+                report["recovered_fixture_note_requests"] = recovered_requests
+
+                # The first missing note must not prevent the following two
+                # readable notes from being saved or get retried every pump.
+                target.goto("https://www.xiaohongshu.com/user/profile/111111111111111111111111?tab=fav&subTab=note&folder_id=missing")
+                target.wait_for_load_state("networkidle")
+                target.bring_to_front()
+                popup.locator("#refresh").evaluate("(e)=>e.click()")
+                expect(popup.locator("#start")).to_be_enabled()
+                popup.locator("#start").evaluate("(e)=>e.click()")
+                expect(popup.locator("#status-title")).to_have_text("已暂停", timeout=15000)
+                expect(popup.locator("#browser-start")).to_be_enabled()
+                other.bring_to_front()
+                popup.locator("#browser-start").evaluate("(e)=>e.click()")
+                expect(popup.locator("#status-title")).to_have_text("已结束 · 跳过 1 篇", timeout=30000)
+                expect(popup.locator("#body-value")).to_have_text("2 / 3 篇")
+                expect(popup.locator("#progress")).to_contain_text("已跳过 1 篇")
+                missing_job_id = popup.evaluate("""async () =>
+                    (await chrome.runtime.sendMessage({type:'state'})).data.session.job_id""")
+                missing_job = status(store, missing_job_id)["data"]["job"]
+                assert missing_job["state"] != "paused", missing_job
+                assert missing_job["skipped_count"] == 1, missing_job
+                assert missing_job["read_complete"] is True and missing_job["body_complete"] is False
+                assert missing_job["body_available"] == 2
+                popup.wait_for_timeout(5500)
+                assert len(missing_note_requests) == 3 and len(set(missing_note_requests)) == 3, missing_note_requests
+                assert missing_note_requests[0] == missing_note_id
+                popup.locator("body").screenshot(path=str(OUT / "extension-skipped-missing-note.png"))
+                report["missing_note_skipped_and_remaining_notes_saved"] = "PASS"
+                report["missing_note_fixture_requests"] = missing_note_requests.copy()
+                report["missing_note_job"] = missing_job
+                expect(popup.locator("#invalid-summary")).to_have_text("失效列表（1）")
+                popup.locator("#invalid-summary").evaluate("(e)=>e.click()")
+                expect(popup.locator("#invalid-items li")).to_have_count(1)
+                expect(popup.locator("#invalid-items")).to_contain_text(f"{missing_note_id:024x}")
+                expect(popup.locator("#invalid-items")).to_contain_text("笔记不存在或已不可访问")
+                expect(popup.locator("#invalid-status")).to_have_text("已显示 1 / 1 篇")
+                expect(popup.locator("#invalid-more")).to_be_hidden()
+                report["invalid_registry_list_displays_observed_failure"] = "PASS"
+
+                # A fresh scan, including one in another collection with a new
+                # signed URL, must reuse the note-level invalid registry.
+                repeated_jobs = []
+                for round_number, folder in [(1, "missing"), (2, "missing-other")]:
+                    missing_scan_round = round_number
+                    before_requests = len(missing_note_requests)
+                    target.goto("https://www.xiaohongshu.com/user/profile/111111111111111111111111?tab=fav&subTab=note&folder_id=" + folder)
+                    target.wait_for_load_state("networkidle")
+                    target.bring_to_front()
+                    popup.locator("#refresh").evaluate("(e)=>e.click()")
+                    expect(popup.locator("#start")).to_be_enabled()
+                    popup.locator("#start").evaluate("(e)=>e.click()")
+                    expect(popup.locator("#status-title")).to_have_text("已暂停", timeout=15000)
+                    expect(popup.locator("#browser-start")).to_be_enabled()
+                    other.bring_to_front()
+                    popup.locator("#browser-start").evaluate("(e)=>e.click()")
+                    expect(popup.locator("#status-title")).to_have_text("已结束 · 跳过 1 篇", timeout=30000)
+                    expect(popup.locator("#body-value")).to_have_text("2 / 3 篇")
+                    repeated_job_id = popup.evaluate("""async () =>
+                        (await chrome.runtime.sendMessage({type:'state'})).data.session.job_id""")
+                    assert repeated_job_id != missing_job_id
+                    repeated = status(store, repeated_job_id)["data"]["job"]
+                    assert repeated["read_complete"] is True and repeated["skipped_count"] == 1, repeated
+                    assert repeated["items"] == {"ready": 2, "skipped": 1}, repeated
+                    with store.read() as db:
+                        skipped = db.execute("SELECT state,attempts,error,payload FROM job_items WHERE job_id=? AND note_id=?",
+                                             (repeated_job_id, f"{missing_note_id:024x}")).fetchone()
+                    assert skipped["state"] == "skipped" and skipped["attempts"] == 0, dict(skipped)
+                    assert skipped["error"] == "SOURCE_UNAVAILABLE"
+                    assert f"fixture-missing-{round_number}" in json.loads(skipped["payload"])["source_url"]
+                    popup.wait_for_timeout(5500)
+                    assert len(missing_note_requests) == before_requests + 2, missing_note_requests
+                    assert missing_note_requests.count(missing_note_id) == 1, missing_note_requests
+                    repeated_jobs.append(repeated)
+                assert repeated_jobs[0]["collection_id"] == missing_job["collection_id"]
+                assert repeated_jobs[1]["collection_id"] != missing_job["collection_id"]
+                registry = popup.evaluate("""async () =>
+                    (await chrome.runtime.sendMessage({type:'invalid-notes',offset:0})).data""")
+                assert registry["total"] == 1 and registry["items"][0]["note_id"] == f"{missing_note_id:024x}", registry
+                assert status(store)["data"]["invalid_notes"]["total"] == 1
+                expect(popup.locator("#invalid-summary")).to_have_text("失效列表（1）")
+                expect(popup.locator("#invalid-items li")).to_have_count(1)
+                popup.locator("body").screenshot(path=str(OUT / "extension-invalid-registry.png"))
+                report["invalid_registry_skips_rescan_without_second_attempt"] = "PASS"
+                report["invalid_registry_skips_other_collection_and_changed_link"] = "PASS"
+                report["invalid_registry_repeated_jobs"] = repeated_jobs
+                report["invalid_registry_fixture_requests"] = missing_note_requests
                 assert not errors
                 report["page_errors"] = errors
                 report["browser_version"] = context.browser.version

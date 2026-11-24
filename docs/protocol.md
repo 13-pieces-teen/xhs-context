@@ -24,14 +24,19 @@
 | POST /v1/jobs/ID/pause | 暂停处理 |
 | POST /v1/jobs/ID/resume | 恢复处理，重试次数未满的失败项重新排队 |
 | POST /v1/jobs/ID/browser | 显式启用普通浏览器笔记页补全；首次切换为未完成项分配新的尝试次数 |
-| POST /v1/browser/next | 返回一个带 lease_id 的待读取笔记，或 task=null |
+| POST /v1/browser/next | 正文与图片列表交替领取，共享一个浏览器读取租约；图片 task 带 kind=images，均带 lease_id，或 task=null |
+| POST /v1/browser/check | job_id、note_id、lease_id，图片另传 kind=images；只读返回 allowed；核对租约、暂停、失效记录及全局限制 |
 | POST /v1/jobs/ID/browser-result | note_id、lease_id，以及 snapshot 或 error |
-| POST /v1/access/restrict | error=ACCESS_RESTRICTED；记录安全限制并停止本库所有任务；无解除接口 |
+| POST /v1/access/restrict | error=ACCESS_RESTRICTED；记录安全限制并停止本库所有任务 |
+| POST /v1/access/refresh | 空 JSON 对象；用户手动刷新时清除本地停止标记，返回 unlocked 与 jobs_resumed=false；不访问平台、不恢复任务 |
 | GET /v1/status?job_id=ID | 范围、批次、内容处理与失败摘要 |
-| POST /v1/image-jobs | note_ids、collection_id、snapshot 三选一，可传 job_id 实现请求幂等 |
+| GET /v1/invalid-notes?limit=50&offset=0 | 只读持久失效列表；total、items、has_more；limit 1–100，offset 0–100000 |
+| POST /v1/image-jobs | note_ids、collection_id、snapshot 三选一，可传 job_id 实现请求幂等；browser=true 通过浏览器取得需要的图片列表 |
 | GET /v1/image-jobs/ID | 独立图片进度、失败原因、最新版本；最多返回 50 篇明细并标记 results_limited |
 | POST /v1/image-jobs/ID/pause | 暂停图片队列，不影响正文任务 |
-| POST /v1/image-jobs/ID/resume | 恢复图片队列及尝试次数未满的失败项；受停止保护约束 |
+| POST /v1/image-jobs/ID/resume | 显式恢复图片队列，为非失效的失败／不完整项重置尝试预算，保留下载检查点；受停止保护约束 |
+| POST /v1/image-jobs/ID/browser | 显式切换为浏览器图片列表并恢复原图片任务；用于扩展“继续补图” |
+| POST /v1/image-jobs/ID/browser-result | note_id、lease_id 及 snapshot/error；图片列表交给本机下载，迟到或重复结果不改变新租约 |
 
 扩展每批最多 25 条。批次内容哈希用于幂等校验：相同 job_id + seq 的相同内容可重发，不同内容返回 CONFLICT。ACK 只在数据库事务提交后返回。
 
@@ -41,7 +46,7 @@
 
 一个库只运行一个处理 worker，使用操作系统文件锁；短写事务由 SQLite 串行化。重启会恢复中断的 running 项；浏览器仍可能持有页面或待提交结果，因此保留其未到期租约，遗失租约由 next_page 在 90 秒后回收。
 
-浏览器临时错误 BROWSER_BUSY、BROWSER_TIMEOUT、BROWSER_CLOSED、BROWSER_INTERRUPTED 在第 1、2 次失败后分别等待 5 秒、15 秒，总计最多尝试 3 次。重试时间保存在 job_items.payload 的 browser_retry_at 中，status 的 job.browser_retry 返回错误、尝试次数及毫秒时间戳；冷却期间不打开后续笔记。达到上限才暂停，用户显式继续可重新分配临时错误预算。普通登录墙或验证提示仍直接暂停；安全限制 300013 与 HTTP 429 触发库级停止保护，不能用普通恢复清除。
+浏览器临时错误 BROWSER_BUSY、BROWSER_TIMEOUT、BROWSER_CLOSED、BROWSER_INTERRUPTED 在第 1、2 次失败后分别等待 5 秒、15 秒，总计最多尝试 3 次。重试时间保存在 job_items.payload 的 browser_retry_at 中，status 的 job.browser_retry 返回错误、尝试次数及毫秒时间戳；冷却期间不打开后续笔记。达到上限才暂停，用户显式继续可重新分配临时错误预算。普通登录墙或验证提示仍直接暂停；安全限制 300013 与 HTTP 429 触发库级停止保护，不能用普通恢复清除。用户手动刷新清除本地标记后，显式继续会为限制失败项重新分配尝试预算，避免过去的限制耗尽次数后永久卡住；新的真实限制仍立即暂停所有任务。
 
 扩展用单条 browser_outbox 持久保存待确认的正文或错误结果，断线后先重交再领下一篇。本机断开按 5、10、20、30 秒上限延迟重连；这是本机通信，不会在断线期间访问新笔记。后台闹钟可能使实际等待更长。遗失页面的 90 秒租约过期后优先重试同篇，连续 3 次过期也暂停；手动暂停后的过期记录归还尝试次数。手动暂停信号在本机断线时也保留，重交结果不能据此自动恢复任务。
 
@@ -49,11 +54,25 @@
 
 该保护不自动解锁、不自动探测小红书恢复情况、不声称限制只与登录或访问频率有关。当前请求可能已经发出，保护阻止的是后续自动调度；本地查询、导出、备份和固定版本回读仍可使用。新检测到的限制会停止同一资料库的任务，不控制其他工具或其他资料库。
 
-只有在人工确认正常访问已恢复、并重新评估读取方式后，才可执行 `sync unlock --confirm-access-restored` 清除本地标记。该命令不访问小红书，也不恢复任何任务；仍需另行显式 resume。它不代表平台解除限制的证明，当前实测任务不得为了验证此命令而继续访问。
+用户手动点击扩展的“刷新”调用 `/v1/access/refresh`，清除本地停止标记及任务级限制错误，正文和图片任务仍为 paused；用户再次点击读取才允许新的尝试。自动状态轮询、重新打开面板和重启不会调用该接口，也不会解锁。扩展在清除前先停止扫描并交付待确认的限制报告和读取结果，避免旧报告在刷新后重新锁定。刷新不探测平台、不证明平台已经恢复；新一次读取若仍出现真实限制，重新持久记录并暂停。无停止标记时刷新不改变任务状态。
+
+扩展日志 `acquisition_epoch` 记录取消代次；安全停止及显式暂停使旧的开始、继续、浏览器补全和补图操作失效。异步准备完成后、发送激活请求前，以及返回后更新会话／开始扫描时均核对代次。积压批次、迟到响应不能在刷新后自动恢复；用户新点击的操作使用新代次。无须等待网络结果才能取消旧操作。
+
+CLI 保留 `sync unlock --confirm-access-restored`，供人工确认访问后清除本地标记；同样不访问小红书、不恢复任务，仍需另行显式 resume。查询任务不会自行调用刷新或解锁接口。
 
 任务在扩展本地日志中持久化，当前网页只决定能否新建扫描，不决定能否查看已有任务。进度、暂停和内容重试在任何网页可用；未完成的列表扫描仍使用原标签页。面板分别显示已发现数、正文保存数和队列状态，failure_summary 汇总正文失败。body_complete 只有在列表完整且本轮每项正文均成功时才为 true；content_complete 仍代表包含媒体的完整归档，不能因为正文成功就置为 true。
 
-浏览器补全由面板按钮显式启用，不在匿名失败后自动切换。扩展每次只打开一个非活动笔记标签页，从标题和正文 DOM 读取快照；不读取图片轮播、Cookie、私有接口、网页内部状态或评论区。单页最多等待 45 秒；页面租约 90 秒，同一库最多一个 browser_running 项。暂停后不再发布在途网页结果，重复提交同一租约幂等，过期租约不可覆盖新结果。只关闭仍在该笔记地址、且未被用户激活的自有标签页。
+明确的单篇失效 `SOURCE_UNAVAILABLE` 与链接失效 `SOURCE_LINK_EXPIRED` 记入 `job_items.state=skipped`，保留错误原因并继续下一篇；不会暂停库或任务，不覆盖已有正文和版本。普通 resume / browser 不重新排队 skipped；旧版 failed 的这两类错误在显式继续时转换为 skipped。解析未找到目标的 `NOTE_NOT_FOUND` 仍属未确认失败，不等同于笔记删除。
+
+job 报告的 `skipped_count`、`skipped_summary` 单独汇总跳过项；`read_complete` 表示列表已收齐且所有项均为 ready 或 skipped。`body_complete` 仍要求所有项为 ready，不能用跳过填补正文覆盖。面板在有跳过项时显示“读取结束，已跳过 N 篇失效笔记”。
+
+`invalid_notes` 按 note_id 保存库级失效记录（原因、首次确认的来源 URL、时间和任务 ID），相同十六进制 ID 的大小写等价，历史主键与版本保持原样。检测到明确笔记失效时同步停止同一 ID 的待处理正文与图片项；后续新任务即使跨收藏夹或链接参数变化，也直接记 skipped，不产生第二次请求。旧 job_items 和 image_items 中纯 SOURCE_UNAVAILABLE / SOURCE_LINK_EXPIRED 的 failed/skipped 在升级时幂等回填。此前已保存的正文、图片和版本不删除；图片文件本身的 404 不推断为整篇笔记失效。
+
+永久失效的页面文字必须是独立肯定的删除或不存在提示；引用、否定、临时故障、重试和登录提示不能据此建立永久记录。匿名 HTML 无法验证样式表控制的可见性时保留未确认状态；浏览器按可见 DOM 判断。笔记请求重定向到其他笔记或无关页面时，不把其他页面的错误记到原笔记。浏览器错误页先等待加载并检查安全／登录提示，再确认链接失效。
+
+全局 status 的 `invalid_notes.total` 提供总数，面板“失效列表”及 CLI `invalid list --limit 50 --offset 0` 分页显示条目。分页为实时列表，total 改变时从 offset 0 重读，面板自动重读以避免条目移位造成重复或遗漏。清除安全限制、重新安装或普通继续均不清除失效记录；当前没有自动或隐式复活入口。
+
+浏览器正文补全由面板按钮显式启用，不在匿名失败后自动切换。扩展每次只打开一个非活动笔记标签页，从标题和正文 DOM 读取快照；正文任务不读取图片轮播、Cookie、私有接口、网页内部状态或评论区。单页最多等待 45 秒；页面租约 90 秒，同一库最多一个 browser_running 项。暂停后不再发布在途网页结果，重复提交同一租约幂等，过期租约不可覆盖新结果。读完先保存结果并清理自有后台页，再等待本机确认；关闭失败保留归属重试。清理限原笔记或已确认站内错误页，用户激活或导航到其他内容的页面保留。
 
 快照验证笔记 ID 和实际页面地址，记录 content_source=browser_dom。正文在同一事务中保存、索引，并将任务项标记 ready；没有后续图片任务。结果记录 content_scope=body、content_state=body_only、media_state=deferred 和 MEDIA_DEFERRED；这是本版未处理的范围，不是正文失败。正文为空、缺失或仅有摘要时分别记录 BODY_EMPTY、BODY_MISSING、BODY_UNVERIFIED，不计为正文成功。匿名请求沿用用户配置的 HTTP/HTTPS 系统代理，并在每个跳转上校验来源及 TLS；代理不可用和本机 DNS 异常会暂停并报告。
 
@@ -136,9 +155,15 @@ read.json 示例，ID 取自搜索结果：
 
 `images fetch --note ID` 支持重复指定笔记；`--collection ID` 处理本地该收藏夹现有成员，不重新枚举网页收藏。`--input request.json` 接收与 POST /v1/image-jobs 相同的请求。三类输入不能混用。`--background` 仅排队；默认优先交给已运行本机组件，未被占用时在前台处理。`images process [--job ID]` 可显式运行队列，`images status [--job ID]` 查看进度；pause / resume 需指定 job，resume 不会启动新后台进程。
 
-浏览器 snapshot 包含 note_id、page_url、images（1–100 个允许域名的 HTTPS 链接），以及可选 image_indices、expected_images、note_type。它只从已打开详情的图片区域读取，不包含 Cookie。未知总数保持 null，不能把当前 DOM 图片数当作总数。
+浏览器 snapshot 包含 note_id、page_url、images（最多 100 个允许域名的 HTTPS 链接），以及可选 image_indices、expected_images、note_type。空 images 仅在 expected_images=0 有明确证据时接受。它只从详情的图片区域读取，不包含 Cookie。未知总数保持 null，不能把当前 DOM 图片数当作总数。
 
-单独补图优先复用已存图片清单，否则解析普通网页取得清单；只发布图片相关变化，保留正文和原始正文快照。每张图片完成后保存检查点，发布前核对笔记版本；并发正文更新返回 REVISION_CONFLICT。失败刷新保留旧的可用版本。正文后续更新保留单独取得的图片，并通过 IMAGES_CAPTURED_SEPARATELY 说明并非同次页面快照。
+图片报告的 `images_saved` 按笔记图片位置合并已归档图片与逐张下载检查点，避免重计。`progress` 分开给出 waiting_gallery / reading_gallery / waiting_download / downloading，以及当前笔记已保存与预期图片数。带资料库路径的报告检查文件存在性与已知字节数；`needs_repair` 表示 ready 项出现本地缺文件，此时 complete=false，显式继续可利用已有完整清单修复。下载复用仍执行 SHA 校验。
+
+新建任务先略过本地已齐全的笔记。浏览器读取每个图片任务最多积压 2 份待下载目录，正在下载也计入，其他任务仍可调度。图库支持 XHS fraction 分页和有界后台翻图；前台用户页不翻动。跨次 partial 仅在可靠序号、总数、正文上下文一致且文件校验通过时合并；已知图片版本冲突会保守保留缺口。
+
+CLI 的匿名补图优先复用已存图片清单，否则解析普通网页。扩展收藏夹补图使用 browser_mode / browser_pending：待浏览器列表的条目不会交给匿名 worker；收到有效列表后才下载图片。不完整列表先保存已取得图片并标记 partial，用户继续时更新列表，避免重复使用旧空列表。正文和图片页使用相同的单页读取保护，并按 browser_last_kind 交替调度。
+
+单独补图只发布图片相关变化，保留正文和原始正文快照。每张图片完成后保存检查点，发布前核对笔记版本和 worker 租约；并发正文更新返回 REVISION_CONFLICT，切换读取方式或取消后的旧 worker 不能覆盖新任务。失败刷新保留旧的可用版本。正文后续更新保留单独取得的图片，并通过 IMAGES_CAPTURED_SEPARATELY 说明并非同次页面快照。
 
 `read mode=asset` 每篇返回 media_state、expected_images 和 assets；空图片列表仍返回该篇及错误：MEDIA_DEFERRED（未获取）、IMAGE_COUNT_UNKNOWN（总数未知）、IMAGE_LIST_INCOMPLETE / IMAGE_LIST_UNVERIFIED（清单不全或未确认）、ASSET_MISSING（文件缺失）。确认图片总数为 0 且未要求具体 asset_id 才能完整返回空列表。成功补图的结果包含新 revision_id，按新版本读取图片；旧引用不失效。
 

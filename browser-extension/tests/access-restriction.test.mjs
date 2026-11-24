@@ -27,7 +27,7 @@ async function harness({redirect = false, disconnected = false} = {}) {
   const submitted = [];
   const native = {request: async (path, body) => {
     if (path === "/v1/browser/next") return restricted ? {task: null, access_restriction: {site_code: "300013"}} : {task};
-    if (path.startsWith("/v1/status")) return {job: {state: "active"}};
+    if (path === '/v1/browser/check') return {allowed: !restricted};
     if (path === "/v1/access/restrict") {
       if (!online) throw new Error("HOST_DISCONNECTED");
       restricted = true;

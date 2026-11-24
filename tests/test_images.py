@@ -96,7 +96,9 @@ def test_images_preserve_body_history_and_do_not_run_ocr(store, monkeypatch):
     assert len(assets['data']['items'][0]['assets']) == 2 and not assets['partial']
     assert all(store.object_path(a['object_path']).is_file() for a in updated['images'])
     cached = Fetcher(lambda *args: pytest.fail('Already saved images must be reused'))
-    assert run(store, {'note_ids': [saved['note_id']]}, cached)['complete']
+    already_saved = create_image_job(store, {'note_ids': [saved['note_id']]})
+    assert already_saved['complete'] and already_saved['items'] == {'ready': 1}
+    assert not ImageWorker(store, fetcher=cached).once(already_saved['job_id'])
     assert current(store, saved['note_id'])[0] == new_revision
 
 
@@ -162,6 +164,35 @@ def test_pause_resume_reuses_download_checkpoint(store):
     worker.recover()
     assert worker.once()
     assert resumed.calls == [('https://ci.xiaohongshu.com/1.png', True)]
+    with store.read() as db:
+        assert image_report(db, job['job_id'])['complete']
+
+
+@pytest.mark.parametrize('code', ['ACCESS_RESTRICTED', 'RATE_LIMITED'])
+def test_refresh_keeps_images_paused_and_explicit_resume_can_retry_restrictions(store, code):
+    saved, revision = setup_note(store)
+    job = create_image_job(store, capture(saved))
+    def blocked(url, media):
+        raise XhsError(code, 'fixture')
+    fetcher = Fetcher(blocked)
+    worker = ImageWorker(store, fetcher=fetcher)
+    for attempt in range(4):
+        assert worker.once()
+        assert len(fetcher.calls) == attempt + 1
+        assert status(store)['data']['access_restriction']['error'] == code
+        with pytest.raises(XhsError):
+            set_image_state(store, job['job_id'], 'active')
+        # Also exercise migration from an already exhausted item.
+        with store.write() as db:
+            db.execute("UPDATE image_items SET attempts=3 WHERE job_id=?", (job['job_id'],))
+        dispatch_sync(store, '/v1/access/refresh', {})
+        assert not worker.once()
+        with store.read() as db:
+            report = image_report(db, job['job_id'])
+            assert report['state'] == 'paused' and report['error'] is None
+        assert current(store, saved['note_id'])[0] == revision
+        set_image_state(store, job['job_id'], 'active')
+    assert ImageWorker(store, fetcher=Fetcher()).once()
     with store.read() as db:
         assert image_report(db, job['job_id'])['complete']
 

@@ -19,7 +19,7 @@ async function harness() {
       if (s.done || s.leased || !s.active || time < s.retryAt) return {task: null};
       s.leased = true; return {task: {...task}};
     }
-    if (path.startsWith('/v1/status')) return {job: {state: s.active ? 'active' : 'paused'}};
+    if (path === '/v1/browser/check') return {allowed: s.active};
     if (path.endsWith('/browser-result')) {
       if (s.offlineResult) throw transient();
       s.results.push(body); s.leased = false;

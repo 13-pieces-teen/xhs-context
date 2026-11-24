@@ -1,7 +1,14 @@
 (() => {
   let run = null;
 
-  const {pageKey, inspect, cards, endMarker, scrollTarget} = globalThis.XhsContextPage;
+  const {pageKey, pageError, rendered, inspect, cards, endMarker, scrollTarget} = globalThis.XhsContextPage;
+  function checkRestriction() {
+    const root = document.querySelector("#noteContainer");
+    // A readable note may discuss the error code; only page-level errors stop a scan.
+    const readable = !!root && rendered(root) && !!root.querySelector("#detail-title,#detail-desc");
+    if (pageError(location.href, document.body?.innerText || "", readable) === "ACCESS_RESTRICTED")
+      throw new Error("ACCESS_RESTRICTED");
+  }
   async function send(value) {
     const result = await chrome.runtime.sendMessage(value);
     if (!result.ok) throw new Error(result.error);
@@ -13,12 +20,16 @@
   async function scan(session) {
     try {
       let stalls = 0;
+      checkRestriction();
       await send({type: "scan-continue", job_id: session.job_id});
       await state(session, "scanning");
+      checkRestriction();
       scrollTarget().scrollTo({top: 0, behavior: "instant"});
       await new Promise(resolve => setTimeout(resolve, 600));
       while (!session.paused && run === session) {
+        checkRestriction();
         await send({type: "scan-continue", job_id: session.job_id});
+        checkRestriction();
         const current = inspect();
         if (!["saved", "unknown"].includes(current.scope) || pageKey(location.href) !== session.page_key ||
             (session.view_marker && current.view_marker !== session.view_marker))
@@ -51,7 +62,7 @@
   chrome.runtime.onMessage.addListener((message, sender, respond) => {
     (async () => {
       if (message.type === 'read-images')
-        return globalThis.XhsContextPage.readImages(message.note_id);
+        return message.collect ? globalThis.XhsContextPage.collectImages(message.note_id) : globalThis.XhsContextPage.readImages(message.note_id);
       if (message.type === "inspect")
         return inspect();
       if (message.type === "read-note")

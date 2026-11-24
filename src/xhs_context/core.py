@@ -41,10 +41,12 @@ def coverage(db, collections=()):
 
 def status(store, job_id=None):
     from .image_jobs import image_reports
+    from .invalid_sources import invalid_report
     with store.read() as db:
         data = {"library": str(store.root), "generation": store.generation(db), "coverage": coverage(db),
                 "access_restriction": access_restriction(db)}
-        data['image_jobs'] = image_reports(db)
+        data['image_jobs'] = image_reports(db, store=store)
+        data['invalid_notes'] = {'total': invalid_report(db, limit=1)['total']}
         if job_id:
             data["job"] = job_report(db, job_id)
         else:

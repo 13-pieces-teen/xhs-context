@@ -23,6 +23,10 @@ def parser():
     setup.add_argument("--extension-dir", default=str(Path(__file__).resolve().parents[2] / "browser-extension"))
     status = commands.add_parser("status", parents=[common])
     status.add_argument("--job")
+    invalid = commands.add_parser('invalid', parents=[common], help='Read the persistent invalid-note list; never retry sources')
+    invalid.add_argument('action', choices=['list'])
+    invalid.add_argument('--limit', type=int, default=50)
+    invalid.add_argument('--offset', type=int, default=0)
     search = commands.add_parser("search", parents=[common])
     search.add_argument("--query", action="append", help="Repeat for up to four keyword queries")
     search.add_argument("--content", choices=["body", "all"], help="Default: saved text beyond hashtags or decoration; all includes incomplete leads")
@@ -137,6 +141,10 @@ def dispatch(args):
     if args.command == "status":
         from .core import status
         return status(store, args.job)
+    if args.command == 'invalid':
+        from .invalid_sources import invalid_report
+        with store.read() as db:
+            return envelope(invalid_report(db, limit=args.limit, offset=args.offset))
     if args.command == "search":
         from .core import search
         if args.input:
@@ -237,7 +245,7 @@ def dispatch_images(store, args):
     from .worker import sync_lock
     if args.images_action == 'status':
         with store.read() as db:
-            return envelope(image_report(db, args.job) if args.job else {'jobs': image_reports(db)})
+            return envelope(image_report(db, args.job, store=store) if args.job else {'jobs': image_reports(db, store=store)})
     if args.images_action in {'pause', 'resume'}:
         return envelope(set_image_state(store, args.job, 'paused' if args.images_action == 'pause' else 'active'))
     job_id = getattr(args, 'job', None)
@@ -262,10 +270,10 @@ def dispatch_images(store, args):
         if exc.code != 'SYNC_ALREADY_RUNNING':
             raise
         with store.read() as db:
-            return envelope({'job': image_report(db, job_id) if job_id else None, 'queued': True,
+            return envelope({'job': image_report(db, job_id, store=store) if job_id else None, 'queued': True,
                              'processor': 'existing_host', 'message': 'The running host will process queued image jobs'})
     with store.read() as db:
-        reports = [image_report(db, job_id)] if job_id else image_reports(db)
+        reports = [image_report(db, job_id, store=store)] if job_id else image_reports(db, store=store)
     return envelope({'jobs': reports}, partial=any(r['failures'] for r in reports))
 
 

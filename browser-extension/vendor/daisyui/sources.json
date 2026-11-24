@@ -1,0 +1,124 @@
+{
+  "name": "daisyUI",
+  "version": "5.8.2",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2020 Pouya Saadeghi",
+  "homepage": "https://daisyui.com/",
+  "repository": "https://github.com/saadeghi/daisyui",
+  "usage": "Vendored CSS is loaded from the extension package; no CDN requests occur at runtime.",
+  "upstream_files_unmodified": true,
+  "files": [
+    {
+      "path": "components/button.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/components/button.css",
+      "bytes": 48050,
+      "sha256": "4afc167bf0cbd135eb3274e591ad7e7a3626a73d3a957159b39eacd0973af3e9",
+      "modified": false
+    },
+    {
+      "path": "components/radialprogress.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/components/radialprogress.css",
+      "bytes": 8084,
+      "sha256": "0e15aef94992929b2a3ed85040d471d8b62b6c966601f8126dbee1d3fe7f5c6b",
+      "modified": false
+    },
+    {
+      "path": "components/badge.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/components/badge.css",
+      "bytes": 17054,
+      "sha256": "02822b5b721c50519e25eb0d8cba3e662a60e78cfa2abc4148c2d7cea4407465",
+      "modified": false
+    },
+    {
+      "path": "components/alert.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/components/alert.css",
+      "bytes": 17648,
+      "sha256": "4b178102427946e572c19c6cb74ac800e257fd2b3b16a129d0cf60f2b3bd01df",
+      "modified": false
+    },
+    {
+      "path": "base/properties.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/base/properties.css",
+      "bytes": 207,
+      "sha256": "e01011ea86395c68e9e1ed7a650072cf796991f672cb267718a11c850f42cde6",
+      "modified": false
+    },
+    {
+      "path": "theme/light.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/theme/light.css",
+      "bytes": 1156,
+      "sha256": "1e61c19080e6aed3d07fa18a58622b2ccfb8fe61a3d9ec6de1a71886b4337ee4",
+      "modified": false
+    },
+    {
+      "path": "LICENSE",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/LICENSE",
+      "bytes": 1071,
+      "sha256": "8709e3ac65c84637c422dc8082b893d9997fce093751c77b2f1983bf29dbf9ea",
+      "modified": false
+    },
+    {
+      "path": "components/input.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/components/input.css",
+      "bytes": 28658,
+      "sha256": "c79bdd3d1186f4ca1db113cf7be70964209b496f6343448258a157d4419d5f99",
+      "modified": false
+    },
+    {
+      "path": "components/checkbox.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/components/checkbox.css",
+      "bytes": 21650,
+      "sha256": "1ac6faf2496a79685ecada8181a66d5c7819cdcab1639cece755168d2d74f159",
+      "modified": false
+    },
+    {
+      "path": "components/collapse.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/components/collapse.css",
+      "bytes": 33974,
+      "sha256": "faefd4b82d85d11ae1552c9827ac2e389d210b0775e023a09b16a721e8bf8180",
+      "modified": false
+    },
+    {
+      "path": "components/card.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/components/card.css",
+      "bytes": 18878,
+      "sha256": "21f1c6cca90a513bc7d406b03d0a78cdea092c1fe463c823e46ad8fc06f4416b",
+      "modified": false
+    },
+    {
+      "path": "components/list.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/components/list.css",
+      "bytes": 7586,
+      "sha256": "9c3c1b09f522a87778e5fe3637540c6361f03bc6eab29737d151d29ef732b2ae",
+      "modified": false
+    },
+    {
+      "path": "components/navbar.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/components/navbar.css",
+      "bytes": 3182,
+      "sha256": "b07cd068b04c44e5d4e24afea58f4e3dc456072c9aff8c1f6458bb9371ea1350",
+      "modified": false
+    },
+    {
+      "path": "components/link.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/components/link.css",
+      "bytes": 9908,
+      "sha256": "7d81c79b7742ebe404d9c7c4a955402ed68b931fe52b406e09a853049bb5d73b",
+      "modified": false
+    },
+    {
+      "path": "components/fieldset.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/components/fieldset.css",
+      "bytes": 3620,
+      "sha256": "993af0fbb936794d35f5f911236b939493b61155a53a0d5651d0bd87ebcae18d",
+      "modified": false
+    },
+    {
+      "path": "components/label.css",
+      "url": "https://cdn.jsdelivr.net/npm/daisyui@5.8.2/components/label.css",
+      "bytes": 10262,
+      "sha256": "42c38644edbc85c3c8f07af7cdea3c00124fb695bdd327f83271583a88da85b1",
+      "modified": false
+    }
+  ]
+}
