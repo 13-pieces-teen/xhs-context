@@ -8,7 +8,9 @@ root = Path(__file__).resolve().parents[1]
 version = json.loads((root / "browser-extension" / "manifest.json").read_text(encoding="utf-8"))["version"]
 destination = root / "dist" / f"xhs-context-prototype-{version}.zip"
 destination.parent.mkdir(exist_ok=True)
-files = [root / name for name in ("README.md", "AGENTS.md", "CHANGELOG.md", "安装.cmd", "pyproject.toml", "uv.lock", ".gitignore")]
+files = [root / name for name in (
+    "README.md", "LICENSE", "AGENTS.md", "CHANGELOG.md", "安装.cmd", "pyproject.toml", "uv.lock", ".gitignore",
+)]
 # Keep local authoring files out of builds from both a Git checkout and an extracted source bundle.
 local_paths = {root / name for name in (
     "docs/figma-panel-build.js",

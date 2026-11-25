@@ -150,3 +150,9 @@ Agent 会结合内容判断适合怎样阅读，而不只看标题里的“入�
 [安装与排障](docs/agent-install.md) · [详细使用指南](docs/usage.md) · [版本更新](CHANGELOG.md)
 
 需要了解命令接口、参与开发或查看验证记录，请看[开发者文档](docs/development.md)。
+
+## 许可证
+
+项目原创代码采用 MIT 许可。[许可证全文](LICENSE)
+
+第三方组件、图标和字体适用各自随附的许可。[daisyUI](browser-extension/vendor/daisyui/LICENSE) · [Lucide](browser-extension/vendor/lucide/LICENSE) · [MiSans](browser-extension/fonts/MiSans-license.pdf)
