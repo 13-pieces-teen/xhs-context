@@ -7,6 +7,8 @@ from .common import (XhsError, bounded_page, decode_cursor, encode_cursor, envel
                      fields, integer, safe_id, text_field)
 from .jobs import job_report
 from .access import access_restriction
+from .image_files import inspect_gallery
+from .invalid_sources import source_notices
 from .text import TOKENIZER_VERSION, normalize, query_groups
 from .retrieval import (SEARCH_VERSION, READ_VERSION, terms_for, document_fields, required_match,
                         rank_document, partial_rank, literal_term, excerpts, group_evidence, has_body_text)
@@ -205,7 +207,9 @@ def search(store, request):
         offset = cursor["offset"] if cursor else 0
         integer(offset, "cursor offset", 0, len(ordered))
         units = []
-        for note_id in ordered[offset:offset + base["limit"]]:
+        page_ids = ordered[offset:offset + base["limit"]]
+        notices = source_notices(db, page_ids)
+        for note_id in page_ids:
             row, payload = records[note_id]
             blocks = [dict(b) for b in db.execute(
                 "SELECT block_id,kind,text,location,ordinal FROM evidence_blocks WHERE revision_id=?",
@@ -219,6 +223,8 @@ def search(store, request):
                           "content_state": payload.get("content_state", "unknown"),
                           "content_scope": payload.get("content_scope", "archive"),
                           "gaps": payload.get("gaps", [])})
+            if note_id.lower() in notices:
+                units[-1]["invalid_source"] = notices[note_id.lower()]
             if note_id in body_filters:
                 units[-1]["body_filter_reason"] = body_filters[note_id]
             if tiers[note_id]:
@@ -290,6 +296,7 @@ def read(store, request):
     base, cursor, budget = validate_read(request)
     units, errors = [], []
     with store.read() as db:
+        notices = source_notices(db, (item['note_id'] for item in base['items']))
         for item in base["items"]:
             row = db.execute("SELECT r.payload,n.deleted FROM revisions r JOIN notes n ON n.id=r.note_id "
                              "WHERE r.id=? AND r.note_id=?", (item["revision_id"], item["note_id"])).fetchone()
@@ -302,17 +309,22 @@ def read(store, request):
                       "source_url": note.get("canonical_url", note.get("source_url", "").split("?")[0]),
                       "content_state": note.get("content_state", "unknown"), "gaps": note.get("gaps", [])}
             common["content_scope"] = note.get("content_scope", "archive")
+            if item["note_id"].lower() in notices:
+                common["invalid_source"] = notices[item["note_id"].lower()]
             if base["mode"] == "asset":
                 wanted = set(item.get("asset_ids", []))
                 assets = note.get("images", [])
-                common['media_state'] = note.get('media_state', 'unknown')
+                media, local_files = inspect_gallery(store, note)
+                common['media_state'] = 'none' if media['state'] == 'none_expected' else media['state']
                 common['expected_images'] = note.get('expected_images')
                 if not assets:
                     units.append(dict(common, asset=None))
-                    if note.get('media_state') == 'deferred':
+                    if media['state'] == 'none_expected':
+                        code = 'ASSET_NOT_FOUND' if wanted else None
+                    elif media['state'] == 'deferred':
                         code = 'MEDIA_DEFERRED'
                     elif note.get('expected_images') == 0:
-                        code = 'ASSET_NOT_FOUND' if wanted else None
+                        code = 'IMAGE_LIST_UNVERIFIED'
                     else:
                         code = 'IMAGE_LIST_INCOMPLETE' if note.get('expected_images') else 'IMAGE_COUNT_UNKNOWN'
                     if code:
@@ -333,15 +345,14 @@ def read(store, request):
                 if wanted and missing == wanted:
                     units.append(dict(common, asset=None))
                 errors.extend({"note_id": item["note_id"], "asset_id": a, "code": "ASSET_NOT_FOUND"} for a in sorted(missing))
-                for asset in assets:
+                for asset, (path, file_error) in zip(assets, local_files):
                     if wanted and asset["asset_id"] not in wanted:
                         continue
-                    result = {k: v for k, v in asset.items() if k not in {"ocr_lines", "source_url"}}
-                    path = store.object_path(asset["object_path"]) if asset.get("object_path") else None
-                    if path and path.is_file():
+                    result = {k: v for k, v in asset.items() if k not in {"ocr_lines", "source_url", "path"}}
+                    if path is not None:
                         result["path"] = str(path)
                     else:
-                        errors.append({"note_id": item["note_id"], "asset_id": asset["asset_id"], "code": "ASSET_MISSING"})
+                        errors.append({"note_id": item["note_id"], "asset_id": asset["asset_id"], "code": file_error})
                     units.append(dict(common, asset=result))
                 continue
             blocks = [dict(b) for b in db.execute(

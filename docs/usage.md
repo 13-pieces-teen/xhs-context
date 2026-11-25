@@ -68,6 +68,8 @@ CLI 处理字面匹配和少量内置等价名称，如 Madrid / 马德里、Kub
 
 ## 回读：用固定版本核对原文
 
+原链接已确认失效或来源已确认不可用时，搜索和回读都会在该篇的 `invalid_source` 中给出原因与首次确认时间。仍可按固定版本引用已有材料。字段缺省表示本库没有确认过来源失效。
+
 从搜索结果复制 ID，保存为 `read.json`。下列大写 ID 都是占位符：
 
 ```json
@@ -139,7 +141,7 @@ stdout 输出单个 JSON；stderr 用于诊断。退出码 `0` 为成功、`2` �
 .\scripts\xhs.ps1 images plan --cursor "CURSOR" --max-chars 6000
 ```
 
-`plan` 不联网、不创建任务、不解除停止保护。`body_image_hints` 是带位置的原文提示；`explicit_body_reference` 表示正文明确指向图片，不能据此推断图片一定包含答案。`local_file_check=existence_only` 仅检查文件存在，不验证图片内容。
+`plan` 只读检查本机资料。`body_image_hints` 给出正文提到图片的位置。项目在规划、回读和补图进度中都检查文件可读且非空，并核对归档中已有的字节数和 SHA-256。`media.corrupt_local_files` 是校验失败的文件数。
 
 阅读已保存的图片，使用固定版本的 asset 请求：
 
@@ -159,6 +161,7 @@ Agent 需实际打开 `assets[].path` 才能判断图中内容。没有图片时
 | `IMAGE_COUNT_UNKNOWN` | 未确认总数，不能声称所有图片齐全 |
 | `IMAGE_LIST_INCOMPLETE` / `IMAGE_LIST_UNVERIFIED` | 已知清单不全或未经确认 |
 | `ASSET_MISSING` | 图片没有可读取的本机文件 |
+| `ASSET_CORRUPT` / `ASSET_UNREADABLE` | 图片文件损坏或当前无法打开。该项带图片 ID，同批通过校验的图片仍返回路径 |
 | `IMAGES_CAPTURED_SEPARATELY` | 正文与保留的图片分次采集，不是同一次网页快照 |
 
 只有用户要求补图时，才执行获取命令：
@@ -167,12 +170,17 @@ Agent 需实际打开 `assets[].path` 才能判断图中内容。没有图片时
 .\scripts\xhs.ps1 images fetch --note NOTE_ID
 .\scripts\xhs.ps1 images fetch --collection COLLECTION_ID --background
 .\scripts\xhs.ps1 images status --job JOB_ID
+.\scripts\xhs.ps1 images status --job JOB_ID --limit 50 --cursor CURSOR
 .\scripts\xhs.ps1 images pause --job JOB_ID
 .\scripts\xhs.ps1 images resume --job JOB_ID
 .\scripts\xhs.ps1 images process --job JOB_ID
 ```
 
-`fetch` 默认交给已运行的本机组件；资料库未被占用时可在前台处理。`--background` 只排队，需浏览器本机组件或 `images process` 执行。`resume` 恢复队列状态，不启动后台进程。按收藏夹补图只处理本地已归档成员，不重新枚举网页收藏。
+`fetch` 和扩展使用同一补图入口。已有完整图片清单时直接补下载，需要清单时由已连接扩展的浏览器读取。命令优先交给运行中的本机组件，资料库空闲时可先处理已有清单的下载。`--background` 只排队。等待浏览器时保持浏览器和扩展连接，`images process` 可处理已取得清单的下载。
+
+`resume` 沿用原任务并恢复浏览器读取，已下载文件保留。扩展中已确认的暂停也可通过 CLI 显式继续，尚未送达本机的暂停操作会优先生效。同收藏夹已有暂停或旧匿名任务时，再次 `fetch` 会复用并继续该任务。按收藏夹补图处理本地已归档成员。
+
+`images status --job JOB_ID` 默认返回前 50 篇结果，可用 `--limit` 调整为 1–100 篇。`data.next_cursor` 有值时，带同一任务 ID 和 `--cursor` 继续，直到游标为空。每页都返回整个任务的实时汇总，每项保留 `note_id` 和成功保存后的 `revision_id`，可直接用于固定版本回读。任务进行中可以翻页，任务完成后可从首页核对完整结果。
 
 成功补图产生新 `revision_id`，之后按新版本读图片。图片任务不改写正文、不自动运行 OCR；新下载图片不会自动进入文本检索。懒加载可能导致图片不全，页面提供的图片也不保证是最高分辨率。真实站点补图尚未验收，视频处理尚未实现。
 

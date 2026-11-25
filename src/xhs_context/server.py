@@ -6,7 +6,6 @@ import secrets
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
 
 from .common import XhsError, atomic_json, dumps, envelope, error_envelope
 from .exports import ExportScheduler
@@ -60,8 +59,7 @@ def make_server(store, token, port=4319):
 
         def dispatch(self):
             self.boundary()
-            parsed = urlsplit(self.path)
-            if self.command == "GET" and parsed.path in {"/v1/status", "/v1/invalid-notes"}:
+            if self.command == "GET":
                 return dispatch_sync(store, self.path)
             if self.command != "POST":
                 raise XhsError("NOT_FOUND", "Unknown endpoint")

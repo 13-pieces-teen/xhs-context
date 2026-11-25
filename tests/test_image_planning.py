@@ -4,9 +4,10 @@ import pytest
 from conftest import card, create, note
 from test_images import Fetcher, capture, current, setup_note
 from xhs_context.common import XhsError
+from xhs_context.core import read
 from xhs_context.image_browser import accept_image_page, enable_image_browser, next_image_page
 from xhs_context.image_jobs import create_image_job, image_report, set_image_state, validate_snapshot
-from xhs_context.images import ImageWorker
+from xhs_context.images import ImageWorker, image_plan
 from xhs_context.invalid_sources import mark_invalid
 from xhs_context.jobs import receive_batch
 
@@ -67,15 +68,31 @@ def test_known_complete_directory_queues_only_cdn_downloads(store):
     assert report(store, job, store=store)['complete']
 
 
-@pytest.mark.parametrize('damage', ['missing', 'truncated'])
+@pytest.mark.parametrize('damage', ['missing', 'empty', 'truncated', 'same_size'])
 def test_resume_rechecks_ready_files_and_repairs_from_saved_directory(store, damage):
     saved, job = save_images(store)
-    _, archived = current(store, saved['note_id'])
+    revision, archived = current(store, saved['note_id'])
+    request = {'mode': 'asset', 'items': [{'note_id': saved['note_id'], 'revision_id': revision}]}
     path = store.object_path(archived['images'][0]['object_path'])
     if damage == 'missing':
         path.unlink()
+    elif damage == 'empty':
+        path.write_bytes(b'')
+    elif damage == 'same_size':
+        original = path.read_bytes()
+        path.write_bytes(bytes([original[0] ^ 1]) + original[1:])
     else:
         path.write_bytes(b'broken')
+    planned = image_plan(store, {'note_ids': [saved['note_id']]})['data']['items'][0]
+    assert planned['fetch_candidate'] and planned['media']['saved_images'] == 1
+    error = 'ASSET_MISSING' if damage == 'missing' else 'ASSET_CORRUPT'
+    assert planned['media']['missing_local_files' if damage == 'missing' else 'corrupt_local_files'] == 1
+    checked = read(store, request)
+    assert checked['partial'] and checked['data']['errors'] == [
+        {'note_id': saved['note_id'], 'asset_id': 'img-1', 'code': error}]
+    gallery = checked['data']['items'][0]
+    assert gallery['media_state'] == planned['media']['state'] == 'partial'
+    assert 'path' not in gallery['assets'][0] and gallery['assets'][1]['path']
     before = report(store, job, store=store)
     assert not before['complete'] and before['needs_repair'] == 1
     assert before['images_saved'] == 1
@@ -86,6 +103,21 @@ def test_resume_rechecks_ready_files_and_repairs_from_saved_directory(store, dam
     assert ImageWorker(store, fetcher=fetcher).once()
     assert fetcher.calls == [('https://ci.xiaohongshu.com/0.png', True)]
     assert report(store, job, store=store)['complete']
+    repaired = read(store, request)
+    assert not repaired['partial'] and all(a['path'] for a in repaired['data']['items'][0]['assets'])
+    assert not image_plan(store, {'note_ids': [saved['note_id']]})['data']['items'][0]['fetch_candidate']
+
+
+def test_asset_read_handles_legacy_metadata_and_invalid_paths_per_item(store):
+    obj = store.put_object(b'legacy bytes', '.png')
+    legacy = dict(asset_id='old', object_path=obj['object_path'], state='downloaded')
+    broken = dict(asset_id='bad', object_path='../outside.png', state='downloaded')
+    saved = dict(note(), images=[legacy, broken], expected_images=2)
+    revision = store.publish(saved)
+    result = read(store, {'mode': 'asset', 'items': [{'note_id': saved['note_id'], 'revision_id': revision}]})
+    assert result['partial'] and result['data']['errors'][0]['code'] == 'INVALID_ASSET_PATH'
+    old, bad = result['data']['items'][0]['assets']
+    assert old['path'] and 'path' not in bad
 
 
 def test_ready_missing_files_cannot_revive_persistently_invalid_note(store):

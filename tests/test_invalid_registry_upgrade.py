@@ -1,8 +1,9 @@
 import pytest
 
-from conftest import card
+from conftest import card, note
 from test_images import capture, current, run, setup_note
 from xhs_context.browser_import import next_page
+from xhs_context.core import read, search
 from xhs_context.image_jobs import create_image_job
 from xhs_context.images import ImageWorker
 from xhs_context.invalid_sources import invalid_report, invalid_source, mark_invalid, skip_invalid_items
@@ -36,6 +37,11 @@ def test_legacy_note_page_image_failures_are_visible_read_only_and_migrate(store
         assert before['total'] == 1 and before['items'][0]['error'] == code
         assert invalid_source(db, saved['note_id'])['job_id'] == job['job_id']
         assert not db.execute("SELECT 1 FROM sqlite_master WHERE name='invalid_notes'").fetchone()
+    request = {'items': [{'note_id': saved['note_id'], 'revision_id': revision}], 'mode': 'full'}
+    assert read(store, request)['data']['items'][0]['invalid_source'] == {'error': code, 'observed_at': '2026-01-01'}
+    assert search(store, {'queries': [saved['title']], 'content': 'all'})['data']['items'][0]['invalid_source']['error'] == code
+    with store.read() as db:
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name='invalid_notes'").fetchone()
     store.initialize()
     new_job = create_image_job(store, capture(saved))
     assert new_job['items'] == {'skipped': 1}
@@ -44,6 +50,28 @@ def test_legacy_note_page_image_failures_are_visible_read_only_and_migrate(store
         assert invalid_report(db) == before
         assert store.generation(db) == generation
         assert db.execute('SELECT current_revision FROM notes').fetchone()[0] == revision
+
+
+def test_search_and_pinned_reads_share_source_notice_without_changing_archived_evidence(store):
+    saved = note(1, title='归档案例', body='历史正文内容')
+    original = store.publish(saved)
+    current_revision = store.publish(dict(saved, body='更新后的正文'))
+    other = note(2, title='归档案例', body='另一篇归档')
+    store.publish(other)
+    with store.write() as db:
+        record = mark_invalid(db, saved['note_id'], 'SOURCE_LINK_EXPIRED', saved['source_url'] + '?token=private')
+    notice = {'error': 'SOURCE_LINK_EXPIRED', 'observed_at': record['observed_at']}
+    hits = search(store, {'queries': ['归档案例']})['data']['items']
+    by_id = {hit['note_id']: hit for hit in hits}
+    assert by_id[saved['note_id']]['revision_id'] == current_revision
+    assert by_id[saved['note_id']]['invalid_source'] == notice
+    assert 'invalid_source' not in by_id[other['note_id']]
+    for mode in ('evidence', 'full', 'asset'):
+        result = read(store, {'mode': mode, 'items': [{'note_id': saved['note_id'], 'revision_id': original}]})
+        item, = result['data']['items']
+        assert not result['partial'] and item['invalid_source'] == notice and item['revision_id'] == original
+        if mode != 'asset':
+            assert any(block['text'] == '历史正文内容' for block in item['blocks'])
 
 
 def test_legacy_asset_failures_do_not_become_unavailable_notes(store):

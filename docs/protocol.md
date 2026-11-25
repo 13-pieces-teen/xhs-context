@@ -31,10 +31,10 @@
 | POST /v1/access/refresh | 空 JSON 对象；用户手动刷新时清除本地停止标记，返回 unlocked 与 jobs_resumed=false；不访问平台、不恢复任务 |
 | GET /v1/status?job_id=ID | 范围、批次、内容处理与失败摘要 |
 | GET /v1/invalid-notes?limit=50&offset=0 | 只读持久失效列表；total、items、has_more；limit 1–100，offset 0–100000 |
-| POST /v1/image-jobs | note_ids、collection_id、snapshot 三选一，可传 job_id 实现请求幂等；browser=true 通过浏览器取得需要的图片列表 |
-| GET /v1/image-jobs/ID | 独立图片进度、失败原因、最新版本；最多返回 50 篇明细并标记 results_limited |
+| POST /v1/image-jobs | note_ids、collection_id、snapshot 三选一，可传 job_id 实现请求幂等。按笔记或收藏夹补图默认由浏览器取得需要的图片清单 |
+| GET /v1/image-jobs/ID?limit=50&cursor=CURSOR | 整个任务的实时进度与一页结果，limit 为 1–100，next_cursor 用于续页 |
 | POST /v1/image-jobs/ID/pause | 暂停图片队列，不影响正文任务 |
-| POST /v1/image-jobs/ID/resume | 显式恢复图片队列，为非失效的失败／不完整项重置尝试预算，保留下载检查点；受停止保护约束 |
+| POST /v1/image-jobs/ID/resume | 显式恢复原任务并启用浏览器读取，为失败／不完整项重置尝试预算，保留下载检查点，遵守停止保护 |
 | POST /v1/image-jobs/ID/browser | 显式切换为浏览器图片列表并恢复原图片任务；用于扩展“继续补图” |
 | POST /v1/image-jobs/ID/browser-result | note_id、lease_id 及 snapshot/error；图片列表交给本机下载，迟到或重复结果不改变新租约 |
 
@@ -79,6 +79,8 @@ job 报告的 `skipped_count`、`skipped_summary` 单独汇总跳过项；`read_
 更新缺少已有正文时保留原版本及其索引；正常取得新正文则发布新的固定版本，保留先前单独获取的图片并标明分次采集。升级时将“正文已取得、仅媒体失败”的旧任务项转为正文完成，保留旧修订、旧对象和引用。正文任务不循环重试媒体失败项。
 
 ## 检索接口
+
+搜索和所有回读模式按笔记返回可选的 `invalid_source`，其中 `error` 为 SOURCE_LINK_EXPIRED 或 SOURCE_UNAVAILABLE，`observed_at` 是首次确认时间。这是本次查询时已知的来源状态，可随旧版本正文一起返回。字段缺省表示没有确认记录。该信息不参与排序，也不改变 revision_id。
 
 工作区的响应信封仍为 `schema_version=2`。SQLite 存储版本仍为 1，初始化时幂等补建 image_jobs / image_items 两张表，已有原文、修订、证据 ID、正文队列和停止保护保留，索引无需重建。尚未发布的搜索策略为 `lexical-body-v6`，读取策略为 `grouped-evidence-v4`；旧游标返回 `CURSOR_STALE`，客户端应重新发起原请求。
 
@@ -147,25 +149,31 @@ read.json 示例，ID 取自搜索结果：
 
 ## 独立图片获取
 
-`images plan` 是独立的只读检查，不调用采集 worker、不建任务、不修改停止保护，也不访问网络。指定 `--note ID`（可重复，最多 100 个）或 `--collection ID`，也可用 `--input` JSON；三种输入不能混用。JSON 为 `note_ids` / `collection_id` 二选一，可传 `limit`（1–50，默认 8）与 `max_chars`（默认 6000）。续页仅传 `cursor` 和可选 `max_chars`。游标绑定 `local-image-plan-v1`、资料库 generation 与本机文件存在状态；变化时返回 `CURSOR_STALE`。
+`images plan` 只读检查本地归档。指定 `--note ID`（可重复，最多 100 个）或 `--collection ID`，也可用 `--input` JSON。JSON 为 `note_ids` / `collection_id` 二选一，可传 `limit`（1–50，默认 8）与 `max_chars`（默认 6000）。续页仅传 `cursor` 和可选 `max_chars`。游标绑定 `local-image-plan-v2`、资料库 generation 和规划结果的摘要，结果变化时返回 `CURSOR_STALE`。
 
-返回 `data.items` 中的固定笔记版本、来源、`media`、`body_image_hints`、`fetch_candidate`、`priority` 和已有 `gaps`。media 区分 deferred / unknown / partial / available / none_expected，分别记录预期数、已列出数、本机存在数、缺失路径、缩略图和未经确认的文件。`local_file_check=existence_only` 表示仅检查存在性，不校验图片哈希或解码内容。正文提示带原文块 ID 和字符位置，最多两条；否定句和问句保守地归为一般图片提及。提示未命中不表示图片没有价值。
+返回 `data.items` 中的固定笔记版本、来源、`media`、`body_image_hints`、`fetch_candidate`、`priority` 和已有 `gaps`。media 区分 deferred / unknown / partial / available / none_expected。读图、规划及任务进度共用本机文件校验。`local_file_check=size_and_sha256_when_known` 要求文件可读且非空，并校验已有的字节数和 SHA-256。旧归档按已有字段检查。`corrupt_local_files`、`unreadable_local_files`、`missing_local_files` 分别记录损坏、无法读取和路径对应文件缺失的数量。正文提示带原文块 ID 和字符位置，最多两条，否定句和问句保守地归为一般图片提及。
 
 存在图片缺口且正文明确指向图片内容的候选标为 `explicit_body_reference`，其次为一般 `image_gap`，已解决者为 `already_resolved`。这是补图检查顺序，不承诺图片包含所需答案。`notes` / `fetch_candidates` / `explicit_reference_candidates` 是本次完整范围的计数；`access_restriction` 与 `acquisition_blocked` 表达当前停止保护。部分笔记不存在时保留其他成功条目和错误。plan 不返回下载链接；是否实际补图仍由独立 fetch 命令决定。
 
-`images fetch --note ID` 支持重复指定笔记；`--collection ID` 处理本地该收藏夹现有成员，不重新枚举网页收藏。`--input request.json` 接收与 POST /v1/image-jobs 相同的请求。三类输入不能混用。`--background` 仅排队；默认优先交给已运行本机组件，未被占用时在前台处理。`images process [--job ID]` 可显式运行队列，`images status [--job ID]` 查看进度；pause / resume 需指定 job，resume 不会启动新后台进程。
+`images fetch --note ID` 支持重复指定笔记，`--collection ID` 处理该收藏夹的本地已归档成员。`--input request.json` 接收与 POST /v1/image-jobs 相同的请求，三类输入任选其一。CLI 和扩展通过共享入口创建任务，按笔记或收藏夹获取默认启用浏览器。已有完整清单时直接补下载，需要清单时等待浏览器读取。显式的 `browser:false` JSON 请求保留匿名读取方式，snapshot 请求直接使用传入的图片清单。
+
+`--background` 仅排队。默认优先交给已运行本机组件，资料库空闲时先在前台处理可下载项。`images process [--job ID]` 处理已有清单的下载，等待图库的任务由已连接扩展的浏览器推进。pause / resume 需指定 job，resume 沿用原任务启用浏览器并保留已下载文件。同收藏夹的未结束任务会复用，显式 fetch 可继续其暂停状态或切换旧匿名任务。携带相同 job_id 的原请求重发仍按幂等规则返回原状态。
+
+`images status --job ID` 默认返回 50 篇明细，可传 `--limit 1..100` 和 `--cursor CURSOR`。HTTP 与 Native Messaging 使用同一 GET 路径。`next_cursor` 绑定任务 ID、创建时间与上一页末尾的笔记 ID，支持进度变化期间续读，任务被替换时返回 CURSOR_STALE。汇总计数始终覆盖整个任务，逐项 `revision_id` 指向保存版本。`results_limited` 表示该页未包含所有任务条目，遍历以 `next_cursor` 是否为空为准。
 
 浏览器 snapshot 包含 note_id、page_url、images（最多 100 个允许域名的 HTTPS 链接），以及可选 image_indices、expected_images、note_type。空 images 仅在 expected_images=0 有明确证据时接受。它只从详情的图片区域读取，不包含 Cookie。未知总数保持 null，不能把当前 DOM 图片数当作总数。
 
-图片报告的 `images_saved` 按笔记图片位置合并已归档图片与逐张下载检查点，避免重计。`progress` 分开给出 waiting_gallery / reading_gallery / waiting_download / downloading，以及当前笔记已保存与预期图片数。带资料库路径的报告检查文件存在性与已知字节数；`needs_repair` 表示 ready 项出现本地缺文件，此时 complete=false，显式继续可利用已有完整清单修复。下载复用仍执行 SHA 校验。
+图片报告的 `images_saved` 按笔记图片位置合并已归档图片与逐张下载检查点，避免重计。`progress` 分开给出 waiting_gallery / reading_gallery / waiting_download / downloading，以及当前笔记已保存与预期图片数。`needs_repair` 表示 ready 项中的本地文件已缺失或未通过校验，此时 complete=false，显式继续可利用已有完整清单修复。
 
 新建任务先略过本地已齐全的笔记。浏览器读取每个图片任务最多积压 2 份待下载目录，正在下载也计入，其他任务仍可调度。图库支持 XHS fraction 分页和有界后台翻图；前台用户页不翻动。跨次 partial 仅在可靠序号、总数、正文上下文一致且文件校验通过时合并；已知图片版本冲突会保守保留缺口。
 
-CLI 的匿名补图优先复用已存图片清单，否则解析普通网页。扩展收藏夹补图使用 browser_mode / browser_pending：待浏览器列表的条目不会交给匿名 worker；收到有效列表后才下载图片。不完整列表先保存已取得图片并标记 partial，用户继续时更新列表，避免重复使用旧空列表。正文和图片页使用相同的单页读取保护，并按 browser_last_kind 交替调度。
+CLI 与扩展的普通补图都使用 browser_mode / browser_pending。待浏览器清单的条目由浏览器租约处理，收到有效清单后再下载图片。不完整清单先保存已取得图片并标记 partial，显式继续时更新清单。正文和图片页使用同一单页读取保护，并按 browser_last_kind 交替调度。
+
+显式继续产生的图片租约带 `resumed` 标记。扩展在本机确认租约仍有效、待发送队列中没有该任务的暂停请求、且本地取消代次保持一致时，可清除已确认的旧暂停标记，从而接受 CLI/API 发起的继续。新的暂停和访问限制优先生效。
 
 单独补图只发布图片相关变化，保留正文和原始正文快照。每张图片完成后保存检查点，发布前核对笔记版本和 worker 租约；并发正文更新返回 REVISION_CONFLICT，切换读取方式或取消后的旧 worker 不能覆盖新任务。失败刷新保留旧的可用版本。正文后续更新保留单独取得的图片，并通过 IMAGES_CAPTURED_SEPARATELY 说明并非同次页面快照。
 
-`read mode=asset` 每篇返回 media_state、expected_images 和 assets；空图片列表仍返回该篇及错误：MEDIA_DEFERRED（未获取）、IMAGE_COUNT_UNKNOWN（总数未知）、IMAGE_LIST_INCOMPLETE / IMAGE_LIST_UNVERIFIED（清单不全或未确认）、ASSET_MISSING（文件缺失）。确认图片总数为 0 且未要求具体 asset_id 才能完整返回空列表。成功补图的结果包含新 revision_id，按新版本读取图片；旧引用不失效。
+`read mode=asset` 返回当前本地文件对应的 media_state、该版本的 expected_images 和 assets。文件通过校验后才返回 path。逐图错误包括 ASSET_MISSING、ASSET_CORRUPT、ASSET_UNREADABLE 和 INVALID_ASSET_PATH，其他可读图片保留。MEDIA_DEFERRED 表示尚未获取，IMAGE_COUNT_UNKNOWN 表示总数未知，IMAGE_LIST_INCOMPLETE / IMAGE_LIST_UNVERIFIED 表示清单不全或未确认。已确认无图且未指定 asset_id 时返回完整空列表。补图成功后可按新 revision_id 阅读，旧版本仍可引用。
 
 `search --match phrase` / JSON `match=phrase` 要求每条完整查询在标题、正文或已有 OCR 的同一行连续出现，忽略大小写、全半角和横向空白差异，沿用等价别名；标签不能单独满足。默认 terms 不变，短语模式会遗漏改写。游标保留模式，续页仍只能附加 max_chars。
 

@@ -90,12 +90,25 @@ export class BrowserReader {
     return state.sessions[jobId]?.user_paused || state.queue.some(q => q.path === '/v1/jobs/' + jobId + '/pause');
   }
   async allowed(task) {
-    if ((await this.journal.load()).restriction_pending) return false;
-    if (await this.locallyPaused(task.job_id, task.kind === 'images')) return false;
+    const state = await this.journal.load();
+    if (state.restriction_pending) return false;
+    const paused = await this.locallyPaused(task.job_id, task.kind === 'images');
+    const pausePath = '/v1/image-jobs/' + task.job_id + '/pause';
+    if (paused && (task.kind !== 'images' || task.resumed !== true || state.queue.some(q => q.path === pausePath)))
+      return false;
     const result = await this.native.request('/v1/browser/check', {
       job_id: task.job_id, note_id: task.note_id, lease_id: task.lease_id,
       ...(task.kind === 'images' ? {kind: 'images'} : {})});
-    return result.allowed === true;
+    if (result.allowed !== true) return false;
+    if (!paused) return true;
+    // A confirmed CLI/API resume can supersede an acknowledged extension pause.
+    // Pending pauses and any newer local cancellation retain priority.
+    return this.journal.mutate(s => {
+      if (s.restriction_pending || (s.acquisition_epoch || 0) !== (state.acquisition_epoch || 0) ||
+          s.queue.some(q => q.path === pausePath)) return false;
+      if (s.image_paused) delete s.image_paused[task.job_id];
+      return true;
+    });
   }
   async deliverResult() {
     const pending = (await this.journal.load()).browser_outbox;

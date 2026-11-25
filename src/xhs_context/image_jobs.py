@@ -5,7 +5,9 @@ import json
 import uuid
 
 from .access import require_access
-from .common import XhsError, digest, dumps, fields, integer, now, safe_id, text_field
+from .common import (XhsError, decode_cursor, digest, dumps, encode_cursor, fields,
+                     integer, now, safe_id, text_field)
+from .image_files import local_image_file
 from .network import validate_note_url, validate_url
 from .invalid_sources import invalid_source, skip_invalid_items
 from urllib.parse import urlsplit
@@ -24,19 +26,15 @@ def finish_idle_image_jobs(db):
 
 
 def local_image_available(store, asset, *, cache=None):
-    """Cheap progress/planning check; the downloader verifies hashes before reuse."""
+    """Count confirmed downloads whose local object still passes verification."""
     if asset.get('state') != 'downloaded' or not asset.get('object_path'):
         return False
     if store is None:
         return True
-    key = (asset['object_path'], asset.get('bytes'))
+    key = (asset['object_path'], asset.get('bytes'), asset.get('sha256'))
     if cache is not None and key in cache:
         return cache[key]
-    try:
-        path = store.object_path(asset['object_path'])
-        valid = path.is_file() and (asset.get('bytes') is None or path.stat().st_size == asset['bytes'])
-    except (OSError, XhsError):
-        valid = False
+    valid = local_image_file(store, asset)[0] is not None
     if cache is not None:
         cache[key] = valid
     return valid
@@ -72,10 +70,19 @@ def _saved_images(store, note, payload, *, cache=None):
     return len(saved)
 
 
-def image_report(db, job_id, *, include_results=True, store=None):
+def image_report(db, job_id, *, include_results=True, store=None, limit=50, cursor=None):
+    integer(limit, 'limit', 1, 100)
     job = db.execute("SELECT * FROM image_jobs WHERE id=?", (job_id,)).fetchone() if available(db) else None
     if not job:
         raise XhsError("JOB_NOT_FOUND", "Unknown image job")
+    after = ''
+    if cursor is not None:
+        page = decode_cursor(cursor, 'image-results')
+        if page.get('job_id') != job_id or page.get('created_at') != job['created_at']:
+            raise XhsError('CURSOR_STALE', 'Image results cursor belongs to another job')
+        after = safe_id(page.get('after'), 'cursor note_id')
+        if not db.execute('SELECT 1 FROM image_items WHERE job_id=? AND note_id=?', (job_id, after)).fetchone():
+            raise XhsError('CURSOR_STALE', 'Image results cursor item is no longer available')
     counts = {r[0]: r[1] for r in db.execute("SELECT state,count(*) FROM image_items WHERE job_id=? GROUP BY state", (job_id,))}
     rows = db.execute("SELECT i.*,json_extract(r.payload,'$.images') AS note_images, "
                       "json_extract(r.payload,'$.expected_images') AS note_expected, "
@@ -87,6 +94,7 @@ def image_report(db, job_id, *, include_results=True, store=None):
                     partial=counts.get('partial', 0), failed=counts.get('failed', 0), skipped=counts.get('skipped', 0),
                     already_complete=0, current_note_id=None, current_saved_images=0, current_expected_images=None)
     results, current_priority, file_cache = [], 0, {}
+    has_more = False
     for row in rows:
         payload = json.loads(row['payload'])
         note = dict(images=json.loads(row['note_images'] or '[]'), expected_images=row['note_expected'],
@@ -107,20 +115,27 @@ def image_report(db, job_id, *, include_results=True, store=None):
             current_priority = priority
             progress.update(current_note_id=row['note_id'], current_saved_images=count,
                             current_expected_images=(payload.get('manifest') or {}).get('expected_images', note.get('expected_images')))
-        if include_results and len(results) < 50:
-            results.append(dict(note_id=row['note_id'], state=row['state'], error=row['error'],
-                                revision_id=payload.get('result', {}).get('revision_id'), saved_images=count,
-                                needs_repair=missing))
+        if include_results and row['note_id'] > after:
+            if len(results) < limit:
+                results.append(dict(note_id=row['note_id'], state=row['state'], error=row['error'],
+                                    revision_id=payload.get('result', {}).get('revision_id'), saved_images=count,
+                                    needs_repair=missing))
+            else:
+                has_more = True
     progress['needs_repair'] = repair
     failures = [dict(r) for r in db.execute("SELECT error,count(*) AS count FROM image_items WHERE job_id=? AND error IS NOT NULL GROUP BY error ORDER BY count(*) DESC LIMIT 10", (job_id,))]
     browser_mode = bool(db.execute("SELECT 1 FROM image_items WHERE job_id=? AND json_extract(payload,'$.browser_mode')=1 LIMIT 1", (job_id,)).fetchone())
     report = {"job_id": job_id, "state": job['state'], "items": counts, "notes": sum(counts.values()), "browser_mode": browser_mode,
             "images_saved": saved, "progress": progress, "needs_repair": repair, "error": job['error'], "failures": failures,
-            "created_at": job['created_at'], "updated_at": job['updated_at'], 'results': results, 'results_limited': sum(counts.values()) > 50,
+            "created_at": job['created_at'], "updated_at": job['updated_at'], 'results': results,
+            'results_limited': len(results) < sum(counts.values()),
+            'next_cursor': encode_cursor({'v': 1, 'kind': 'image-results', 'job_id': job_id,
+                                          'created_at': job['created_at'], 'after': results[-1]['note_id']}) if has_more else None,
             "complete": bool(counts) and not repair and counts.get('ready', 0) == sum(counts.values())}
     if not include_results:
         report.pop('results')
         report.pop('results_limited')
+        report.pop('next_cursor')
     return report
 
 
@@ -163,7 +178,7 @@ def validate_snapshot(snapshot):
             'note_type': snapshot.get('note_type', 'unknown'), 'source': 'browser_gallery'}
 
 
-def create_image_job(store, request):
+def create_image_job(store, request, *, browser_default=False):
     fields(request, {'job_id', 'note_ids', 'collection_id', 'snapshot', 'browser'})
     if 'browser' in request and not isinstance(request['browser'], bool):
         raise XhsError('INVALID_ARGUMENT', 'browser must be a boolean', exit_code=2)
@@ -227,7 +242,7 @@ def create_image_job(store, request):
             selected_manifest = manifest
             if selected_manifest is None and complete_manifest(local['manifest']):
                 selected_manifest = local['manifest']
-            if request.get('browser'):
+            if request.get('browser', browser_default and manifest is None):
                 payload.update(browser_mode=True, browser_pending=selected_manifest is None)
             if selected_manifest is not None:
                 payload['manifest'] = selected_manifest
@@ -243,6 +258,15 @@ def create_image_job(store, request):
         db.executemany('INSERT INTO image_items(job_id,note_id,payload,state,error,updated_at) VALUES (?,?,?,?,?,?)', rows)
         finish_idle_image_jobs(db)
         return image_report(db, job_id, store=store)
+
+
+def start_image_job(store, request):
+    """Public acquisition entry shared by the CLI and browser integration."""
+    fields(request, {'job_id', 'note_ids', 'collection_id', 'snapshot', 'browser'})
+    report = create_image_job(store, request, browser_default=True)
+    if report.get('reused') and request.get('browser', True) and (report['state'] == 'paused' or not report['browser_mode']):
+        report = dict(set_image_state(store, report['job_id'], 'active', browser=True), reused=True)
+    return report
 
 
 def complete_manifest(manifest):
@@ -261,6 +285,7 @@ def resume_image_items(store, db, job_id, *, was_active, browser=False):
         switching = browser and not payload.get('browser_mode')
         if browser:
             payload['browser_mode'] = True
+            payload['resume_requested'] = True
         # Repeated clicks while the browser/worker is progressing are idempotent.
         if was_active and row['state'] == 'browser_running':
             continue
@@ -310,7 +335,7 @@ def resume_image_items(store, db, job_id, *, was_active, browser=False):
                    (dumps(payload), 0 if retry or not was_active else row['attempts'], now(), job_id, row['note_id']))
 
 
-def set_image_state(store, job_id, state):
+def set_image_state(store, job_id, state, *, browser=False):
     if state not in {'active', 'paused'}:
         raise XhsError('INVALID_ARGUMENT', 'Invalid image job state', exit_code=2)
     with store.write() as db:
@@ -318,7 +343,7 @@ def set_image_state(store, job_id, state):
         skip_invalid_items(db)
         if state == 'active':
             require_access(db)
-            resume_image_items(store, db, job_id, was_active=previous['state'] == 'active')
+            resume_image_items(store, db, job_id, was_active=previous['state'] == 'active', browser=browser)
         db.execute('UPDATE image_jobs SET state=?,error=CASE WHEN ?=\'active\' THEN NULL ELSE error END,updated_at=? WHERE id=?', (state, state, now(), job_id))
         finish_idle_image_jobs(db)
         return image_report(db, job_id, store=store)

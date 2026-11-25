@@ -6,7 +6,7 @@ import threading
 import httpx
 import pytest
 
-from conftest import card
+from conftest import card, note
 from xhs_context.common import XhsError
 from xhs_context.network import validate_note_url, validate_url, public_addresses
 from xhs_context.server import make_server
@@ -41,6 +41,20 @@ def test_real_loopback_receiver_commits_and_rejects_wrong_origin(store):
             assert not result["data"]["job"]["content_complete"]
             with store.read() as db:
                 assert db.execute("SELECT count(*) FROM job_items").fetchone()[0] == 1
+            for number in (2, 3):
+                store.publish(note(number))
+            image_job = client.post('/v1/image-jobs', json={
+                'note_ids': [note(number)['note_id'] for number in (2, 3)]}, headers=auth).json()['data']
+            result_url = '/v1/image-jobs/' + image_job['job_id']
+            assert client.get(result_url).status_code == 401
+            first = client.get(result_url, params={'limit': 1}, headers=auth)
+            assert first.status_code == 200
+            first = first.json()['data']
+            second = client.get(result_url, params={'cursor': first['next_cursor']}, headers=auth).json()['data']
+            assert first['notes'] == second['notes'] == 2
+            assert first['results'][0]['note_id'] != second['results'][0]['note_id']
+            assert second['next_cursor'] is None and second['results'][0]['revision_id']
+            assert client.get(result_url, params={'limit': 0}, headers=auth).status_code == 400
     finally:
         server.shutdown()
         server.server_close()

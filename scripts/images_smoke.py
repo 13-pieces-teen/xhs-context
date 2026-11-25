@@ -6,6 +6,8 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import time
 import uuid
 from urllib.parse import urlsplit
@@ -136,9 +138,10 @@ NativeClient.prototype.request = function(path, body) {
     current_id, revision = seed_note(store, 123)
     collections = {name: seed_collection(store, name, ids) for name, ids in {
         'new-gallery': [9001], 'legacy-gallery': [9002], 'partial-gallery': [9003],
-        'restricted-gallery': [9004, 9005], 'lazy-gallery': [9006], 'missing-gallery': [9007, 9008, 9009]}.items()}
+        'restricted-gallery': [9004, 9005], 'lazy-gallery': [9006], 'missing-gallery': [9007, 9008, 9009],
+        'cli-gallery': [9010], 'cli-resume-gallery': [9011]}.items()}
     modes = {f'{9001:024x}': 'delayed', f'{9003:024x}': 'partial', f'{9004:024x}': 'restricted',
-             f'{9006:024x}': 'lazy', f'{9007:024x}': 'unavailable'}
+             f'{9006:024x}': 'lazy', f'{9007:024x}': 'unavailable', f'{9011:024x}': 'partial'}
     opened, closed, gallery_clicks, errors = [], [], [], []
     report = {'dataset': 'synthetic_fixture', 'live_xhs': 'NOT_RUN', 'work': str(work),
               'browser_mode': 'headed_offscreen' if headed else 'headless', 'checks': {}}
@@ -333,6 +336,30 @@ NativeClient.prototype.request = function(path, body) {
                 assert wait_job(partial, lambda r: r['complete'])['images_saved'] == 2
                 assert opened.count(collections['partial-gallery'][0]) == 2
                 report['checks']['partial_gallery_waits_for_explicit_resume'] = 'PASS'
+
+                def image_cli(*args):
+                    result = subprocess.run([sys.executable, '-m', 'xhs_context', '--library', str(store.root),
+                                             'images', *args], capture_output=True, text=True, encoding='utf-8', timeout=15)
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    return json.loads(result.stdout)['data']
+
+                cli_note = collections['cli-gallery'][0]
+                cli_job = image_cli('fetch', '--note', cli_note)['job']
+                assert cli_job['browser_mode']
+                assert wait_job(cli_job['job_id'], lambda r: r['complete'])['images_saved'] == 2
+                assert opened.count(cli_note) == closed.count(cli_note) == 1
+                report['checks']['cli_fetch_uses_running_extension_gallery_reader'] = 'PASS'
+
+                cli_partial = create_from_ui('cli-resume-gallery')
+                wait_job(cli_partial, lambda r: r['state'] == 'finished')
+                paused = popup.evaluate("job_id=>chrome.runtime.sendMessage({type:'images-pause',job_id})", cli_partial)
+                assert paused['ok'] and wait_job(cli_partial, lambda r: r['state'] == 'paused')
+                assert sw.evaluate("async id=>(await chrome.storage.local.get('journal')).journal.image_paused[id]", cli_partial)
+                modes[collections['cli-resume-gallery'][0]] = 'normal'
+                image_cli('resume', '--job', cli_partial)
+                assert wait_job(cli_partial, lambda r: r['complete'])['images_saved'] == 2
+                assert not sw.evaluate("async id=>(await chrome.storage.local.get('journal')).journal.image_paused[id]", cli_partial)
+                report['checks']['cli_resume_supersedes_acknowledged_extension_pause'] = 'PASS'
 
                 restricted_job = create_from_ui('restricted-gallery')
                 wait_job(restricted_job, lambda r: r['error'] == 'ACCESS_RESTRICTED')

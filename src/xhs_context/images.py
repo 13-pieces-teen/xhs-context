@@ -8,6 +8,7 @@ import uuid
 from .access import access_restriction, require_access, restrict_access
 from .common import (XhsError, bounded_page, decode_cursor, digest, dumps, encode_cursor,
                      envelope, fields, integer, now, safe_id)
+from .image_files import inspect_gallery
 from .image_jobs import available, finish_idle_image_jobs
 from .invalid_sources import invalid_source, mark_invalid, skip_invalid_items
 from .network import AnonymousFetcher, validate_url, validate_note_response
@@ -17,7 +18,7 @@ from .processing import finish_content, store_image
 STOP_ERRORS = {'ACCESS_RESTRICTED', 'RATE_LIMITED', 'ACCESS_BLOCKED', 'NETWORK_ERROR',
                'PROXY_ERROR', 'PROXY_CONFIGURATION', 'LOCAL_NETWORK_BLOCKED'}
 
-IMAGE_PLAN_VERSION = 'local-image-plan-v1'
+IMAGE_PLAN_VERSION = 'local-image-plan-v2'
 _CONTENT = r'(?:答案|答题思路|解答|步骤|做法|教程|操作方法|公式|代码|详解|详细过程)'
 _IMAGE = r'(?:图中|图里|图上|图内|图片|配图|长图|下图|上图|图表|图所示|图[一二三四五六七八九十0-9]+|图(?=$|[\s。，！？?!：:；;、]))'
 _CLAUSE_END = r'。！？?!\n，,；;'
@@ -56,40 +57,6 @@ def _image_hints(blocks):
                       'excerpt_only': start > 0 or end < len(original)})
     hints.sort(key=lambda h: (h['signal'] != 'explicit_content_reference', h['location']['start']))
     return hints[:2]
-
-
-def _image_state(store, note):
-    assets = note.get('images', [])
-    expected = note.get('expected_images')
-    saved, missing_files, invalid_paths, thumbnails, unverified = 0, 0, 0, 0, 0
-    for asset in assets:
-        if asset.get('object_path'):
-            try:
-                if store.object_path(asset['object_path']).is_file():
-                    saved += 1
-                    thumbnails += asset.get('quality') == 'thumbnail'
-                    unverified += asset.get('state') != 'downloaded'
-                else:
-                    missing_files += 1
-            except XhsError:
-                invalid_paths += 1
-    complete = expected is not None and len(assets) == expected and note.get('image_manifest_complete') is not False
-    if complete and not expected:
-        state = 'none_expected'
-    elif complete and saved == expected and not thumbnails and not unverified:
-        state = 'available'
-    elif note.get('media_state') == 'deferred' and saved == 0:
-        state = 'deferred'
-    elif expected is None and not assets:
-        state = 'unknown'
-    else:
-        state = 'partial'
-    return {'state': state, 'expected_images': expected, 'listed_images': len(assets),
-            'saved_images': saved, 'unsaved_listed_images': len(assets) - saved,
-            'missing_expected_images': max(0, expected - saved) if expected is not None else None,
-            'missing_local_files': missing_files, 'invalid_object_paths': invalid_paths,
-            'thumbnail_images': thumbnails, 'unverified_local_images': unverified,
-            'manifest_complete': complete, 'local_file_check': 'existence_only'}
 
 
 def _validate_image_plan(request):
@@ -142,7 +109,7 @@ def image_plan(store, request):
                 errors.append({'note_id': note_id, 'code': 'NOTE_NOT_FOUND'})
                 continue
             note = json.loads(row['payload'])
-            media = _image_state(store, note)
+            media, _ = inspect_gallery(store, note)
             hints = _image_hints(db.execute("SELECT block_id,text,location FROM evidence_blocks WHERE revision_id=? "
                                            "AND kind='body' ORDER BY ordinal", (row['current_revision'],)))
             invalid = invalid_source(db, note_id)

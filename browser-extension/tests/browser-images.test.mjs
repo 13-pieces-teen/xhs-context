@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import {BrowserReader} from '../browser-reader.mjs';
 import {Journal} from '../journal.mjs';
 
-async function harness({error, expected = 2, lostReceipt = false, paused = false, bodyPaused = false, delayedGallery = false} = {}) {
+async function harness({error, expected = 2, lostReceipt = false, paused = false, bodyPaused = false, delayedGallery = false, resumed = false} = {}) {
   let stored = {}, time = 0, leased = false, restricted = false, firstReceipt = true, reads = 0;
   const calls = [], opened = [], pages = new Map(), results = [];
-  const task = {kind: 'images', job_id: 'one', note_id: '000000000000000000000001', lease_id: 'lease',
+  const task = {kind: 'images', job_id: 'one', note_id: '000000000000000000000001', lease_id: 'lease', resumed,
     source_url: 'https://www.xiaohongshu.com/explore/000000000000000000000001'};
   const journal = new Journal({get: async key => ({[key]: structuredClone(stored[key])}),
     set: async value => { stored = structuredClone({...stored, ...value}); }});
@@ -48,7 +48,7 @@ async function harness({error, expected = 2, lostReceipt = false, paused = false
   };
   const reader = () => new BrowserReader(tabs, native, journal, async () => {},
     {now: () => time, sleep: async ms => { time += ms; }, pollInterval: 1, pageTimeout: 10});
-  return {reader, journal, task, calls, opened, results, restricted: () => restricted, advance: () => { time += 30000; }};
+  return {reader, native, journal, task, calls, opened, results, restricted: () => restricted, advance: () => { time += 30000; }};
 }
 
 test('image-only browser job reads its gallery without any body session', async () => {
@@ -137,4 +137,45 @@ test('queued image pause is honored independently from same-ID body pause paths'
   assert.equal(await h.reader().allowed(h.task), false);
   await h.journal.mutate(s => { s.queue[0].path = '/v1/jobs/one/pause'; });
   assert.equal(await h.reader().allowed(h.task), true);
+});
+
+test('host-confirmed external resume clears an acknowledged extension pause', async () => {
+  const h = await harness({paused: true, resumed: true});
+  await h.reader().pump();
+  assert.equal(h.opened.length, 1);
+  assert.ok(h.results[0].snapshot);
+  assert.equal((await h.journal.load()).image_paused.one, undefined);
+});
+
+test('an undelivered image pause wins over an external resume', async () => {
+  const h = await harness({paused: true, resumed: true});
+  await h.journal.push('/v1/image-jobs/one/pause', {}, 'one');
+  await h.reader().pump();
+  assert.equal(h.opened.length, 0);
+  assert.equal((await h.journal.load()).image_paused.one, true);
+});
+
+test('new local cancellation during resume verification keeps the pause', async () => {
+  const h = await harness({paused: true, resumed: true});
+  const request = h.native.request;
+  h.native.request = async (path, body) => {
+    const result = await request(path, body);
+    if (path === '/v1/browser/check') await h.journal.mutate(s => {
+      s.acquisition_epoch = (s.acquisition_epoch || 0) + 1;
+      s.image_paused.one = true;
+    });
+    return result;
+  };
+  await h.reader().pump();
+  assert.equal(h.opened.length, 0);
+  assert.equal((await h.journal.load()).image_paused.one, true);
+});
+
+test('a revoked resumed lease retains the extension pause', async () => {
+  const h = await harness({paused: true, resumed: true});
+  const request = h.native.request;
+  h.native.request = async (path, body) => path === '/v1/browser/check' ? {allowed: false} : request(path, body);
+  await h.reader().pump();
+  assert.equal(h.opened.length, 0);
+  assert.equal((await h.journal.load()).image_paused.one, true);
 });

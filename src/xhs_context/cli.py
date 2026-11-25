@@ -60,6 +60,9 @@ def parser():
     for name in ('status', 'pause', 'resume', 'process'):
         command = image_sub.add_parser(name, parents=[common])
         command.add_argument('--job', required=name in {'pause', 'resume'})
+        if name == 'status':
+            command.add_argument('--limit', type=int, help='Results per page (1-100). Requires --job')
+            command.add_argument('--cursor', help="Continue this job's results page. Requires --job")
     ingest = commands.add_parser("ingest", parents=[common], help="Explicit local snapshot import; not proof of live sync")
     ingest.add_argument("--input", required=True)
     ingest.add_argument("--no-ocr", action="store_true")
@@ -240,14 +243,19 @@ def dispatch_images(store, args):
         else:
             request = {key: getattr(args, key) for key in shortcuts if getattr(args, key) is not None}
         return image_plan(store, request)
-    from .image_jobs import create_image_job, image_report, image_reports, set_image_state
+    from .image_jobs import start_image_job, image_report, image_reports, set_image_state
     from .images import ImageWorker
     from .worker import sync_lock
     if args.images_action == 'status':
+        if not args.job and (args.limit is not None or args.cursor is not None):
+            raise XhsError('INVALID_ARGUMENT', 'Result pagination requires --job', exit_code=2)
         with store.read() as db:
-            return envelope(image_report(db, args.job, store=store) if args.job else {'jobs': image_reports(db, store=store)})
+            return envelope(image_report(db, args.job, store=store,
+                                         limit=args.limit if args.limit is not None else 50, cursor=args.cursor)
+                            if args.job else {'jobs': image_reports(db, store=store)})
     if args.images_action in {'pause', 'resume'}:
-        return envelope(set_image_state(store, args.job, 'paused' if args.images_action == 'pause' else 'active'))
+        return envelope(set_image_state(store, args.job, 'paused' if args.images_action == 'pause' else 'active',
+                                        browser=args.images_action == 'resume'))
     job_id = getattr(args, 'job', None)
     if args.images_action == 'fetch':
         if args.input:
@@ -256,7 +264,7 @@ def dispatch_images(store, args):
             request = read_input(args.input)
         else:
             request = {k: getattr(args, k) for k in ('note_ids', 'collection_id') if getattr(args, k) is not None}
-        report = create_image_job(store, request)
+        report = start_image_job(store, request)
         job_id = report['job_id']
         if args.background:
             return envelope({'job': report, 'queued': True})

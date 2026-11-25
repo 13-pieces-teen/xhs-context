@@ -77,6 +77,22 @@ def invalid_source(db, note_id):
     return dict(row) if row else None
 
 
+def source_notices(db, note_ids):
+    """Look up confirmed source failures for a page without exposing acquisition URLs."""
+    keys = tuple(dict.fromkeys(note_id.lower() for note_id in note_ids))
+    if not keys:
+        return {}
+    placeholders = ','.join('?' for _ in keys)
+    where = f"lower(note_id) IN ({placeholders})"
+    if _available(db):
+        source = _first_sources("SELECT * FROM invalid_notes WHERE " + where)
+    else:
+        legacy, _ = _legacy(db)
+        source = f"SELECT * FROM ({legacy}) WHERE {where}"
+    rows = db.execute(f"SELECT lower(note_id), error, observed_at FROM ({source})", keys)
+    return {key: {'error': error, 'observed_at': observed} for key, error, observed in rows}
+
+
 def mark_invalid(db, note_id, error, source_url, job_id=None):
     if error not in INVALID_SOURCE_ERRORS:
         raise XhsError("INVALID_ARGUMENT", "Only an explicit note-source failure may be retained", exit_code=2)

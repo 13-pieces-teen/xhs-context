@@ -5,11 +5,10 @@ from datetime import datetime, timedelta, timezone
 import json
 import uuid
 
-from .access import access_restriction, require_access, restrict_access
+from .access import access_restriction, restrict_access
 from .browser_retry import RETRYABLE, DELAYS, clock_ms
 from .common import XhsError, dumps, fields, now, safe_id
-from .image_jobs import (available, finish_idle_image_jobs, image_report,
-                         resume_image_items, validate_snapshot)
+from .image_jobs import available, finish_idle_image_jobs, set_image_state, validate_snapshot
 from .invalid_sources import invalid_source, mark_invalid, skip_invalid_items
 
 SOURCE_ERRORS = {'SOURCE_UNAVAILABLE', 'SOURCE_LINK_EXPIRED'}
@@ -20,14 +19,7 @@ MAX_PENDING_DIRECTORIES = 2
 
 
 def enable_image_browser(store, job_id):
-    with store.write() as db:
-        require_access(db)
-        previous = image_report(db, job_id, store=store)
-        skip_invalid_items(db)
-        resume_image_items(store, db, job_id, was_active=previous['state'] == 'active', browser=True)
-        db.execute("UPDATE image_jobs SET state='active',error=NULL,updated_at=? WHERE id=?", (now(), job_id))
-        finish_idle_image_jobs(db)
-        return image_report(db, job_id, store=store)
+    return set_image_state(store, job_id, 'active', browser=True)
 
 
 def _cutoff():
@@ -91,7 +83,8 @@ def next_image_page(store):
         db.execute("UPDATE image_items SET state='browser_running',attempts=attempts+1,error=NULL,payload=?,updated_at=? "
                    "WHERE job_id=? AND note_id=?", (dumps(payload), now(), row['job_id'], row['note_id']))
         return {'task': {'kind': 'images', 'job_id': row['job_id'], 'note_id': row['note_id'],
-                         'source_url': payload['source_url'], 'lease_id': lease}}
+                         'source_url': payload['source_url'], 'lease_id': lease,
+                         'resumed': bool(payload.get('resume_requested'))}}
 
 
 def check_image_page(store, request):
