@@ -1,0 +1,424 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "description": "Actual popup HTML rendered with synthetic state; not a live collection run.",
+  "source": "browser-extension/popup.html",
+  "viewport_css": {
+    "width": 360,
+    "height": 600
+  },
+  "device_scale_factor": 2,
+  "image_pixels": {
+    "width": 720,
+    "height": 1200
+  },
+  "source_sha256": {
+    "browser-extension/popup.html": "7005179aafc08d17d262cc34e30805e637542eceda6f4c3ff86f704b14d7a380",
+    "browser-extension/popup.css": "8290e6218be713d622359249f43fd5994f70d7cdcd679591a4d9af13daa54899",
+    "browser-extension/popup.js": "220b003b790eeb2acacaac1bb63cf580b73d21664fabacd9396ba2b5273a505f"
+  },
+  "states": {
+    "ready": {
+      "image": "ready.png",
+      "controls": {
+        "#start": {
+          "visible": true,
+          "enabled": true,
+          "label": "开始读取",
+          "bbox_css": {
+            "x": 20,
+            "y": 209.1875,
+            "width": 320,
+            "height": 46
+          },
+          "bbox_image": {
+            "x": 40,
+            "y": 418.375,
+            "width": 640,
+            "height": 92
+          }
+        },
+        "#pause": {
+          "visible": false,
+          "enabled": false,
+          "label": "暂停读取",
+          "bbox_css": null,
+          "bbox_image": null
+        },
+        "#resume": {
+          "visible": false,
+          "enabled": false,
+          "label": "继续读取",
+          "bbox_css": null,
+          "bbox_image": null
+        }
+      },
+      "text_fields": {
+        "connection": "已连接",
+        "folder": "收藏 · 笔记",
+        "scope": "60 篇笔记"
+      },
+      "visible_text": [
+        "收藏上下文",
+        "已连接",
+        "当前收藏夹",
+        "收藏 · 笔记",
+        "60 篇笔记",
+        "开始读取",
+        "关闭面板可继续，请保留收藏页。",
+        "读取详情",
+        "设置",
+        "帮助"
+      ],
+      "synthetic_state": {
+        "page": {
+          "name": "收藏 · 笔记",
+          "scope": "saved",
+          "expected_count": 60,
+          "page_key": "https://www.xiaohongshu.com/user/profile/fixture?tab=fav",
+          "identity_marker": "fixture",
+          "view_marker": "fav-note"
+        },
+        "page_error": "请在小红书打开收藏 → 笔记。",
+        "page_session": null,
+        "session": null,
+        "server_status": null,
+        "connection_error": null
+      }
+    },
+    "running": {
+      "image": "running.png",
+      "controls": {
+        "#start": {
+          "visible": false,
+          "enabled": false,
+          "label": "正在读取…",
+          "bbox_css": null,
+          "bbox_image": null
+        },
+        "#pause": {
+          "visible": true,
+          "enabled": true,
+          "label": "暂停读取",
+          "bbox_css": {
+            "x": 20,
+            "y": 335.390625,
+            "width": 310,
+            "height": 46
+          },
+          "bbox_image": {
+            "x": 40,
+            "y": 670.781,
+            "width": 620,
+            "height": 92
+          }
+        },
+        "#resume": {
+          "visible": false,
+          "enabled": false,
+          "label": "继续读取",
+          "bbox_css": null,
+          "bbox_image": null
+        }
+      },
+      "text_fields": {
+        "connection": "已连接",
+        "task-name": "收藏 · 笔记",
+        "status-title": "保存正文中",
+        "list-value": "36 / 60 篇",
+        "list-state": "尚未确认收齐",
+        "body-value": "24 / 36 篇",
+        "body-state": "占已发现笔记",
+        "action-note": "关闭面板可继续，请保留收藏页。"
+      },
+      "visible_text": [
+        "收藏上下文",
+        "已连接",
+        "收藏读取",
+        "收藏 · 笔记",
+        "保存正文中",
+        "收藏列表",
+        "36 / 60 篇",
+        "尚未确认收齐",
+        "正文保存",
+        "24 / 36 篇",
+        "占已发现笔记",
+        "关闭面板可继续，请保留收藏页。",
+        "暂停读取",
+        "常用操作",
+        "打开收藏页",
+        "补全正文",
+        "当前笔记图片",
+        "收藏夹图片",
+        "读取详情",
+        "设置",
+        "帮助"
+      ],
+      "synthetic_state": {
+        "page": {
+          "name": "收藏 · 笔记",
+          "scope": "saved",
+          "expected_count": 60,
+          "page_key": "https://www.xiaohongshu.com/user/profile/fixture?tab=fav",
+          "identity_marker": "fixture",
+          "view_marker": "fav-note"
+        },
+        "page_error": "请在小红书打开收藏 → 笔记。",
+        "page_session": {
+          "job_id": "guide-fixture",
+          "name": "收藏 · 笔记",
+          "finalized": false,
+          "scan_state": "scanning"
+        },
+        "session": {
+          "job_id": "guide-fixture",
+          "name": "收藏 · 笔记",
+          "finalized": false,
+          "scan_state": "scanning"
+        },
+        "server_status": {
+          "job": {
+            "state": "active",
+            "discovered": 36,
+            "body_available": 24,
+            "expected_count": 60,
+            "items": {
+              "ready": 24,
+              "queued": 11,
+              "running": 1
+            },
+            "body_complete": false,
+            "list_complete": false,
+            "failure_summary": [],
+            "content_mode": "anonymous"
+          }
+        },
+        "connection_error": null
+      }
+    },
+    "paused": {
+      "image": "paused.png",
+      "controls": {
+        "#start": {
+          "visible": false,
+          "enabled": false,
+          "label": "继续读取",
+          "bbox_css": null,
+          "bbox_image": null
+        },
+        "#pause": {
+          "visible": false,
+          "enabled": false,
+          "label": "暂停读取",
+          "bbox_css": null,
+          "bbox_image": null
+        },
+        "#resume": {
+          "visible": true,
+          "enabled": true,
+          "label": "继续读取",
+          "bbox_css": {
+            "x": 20,
+            "y": 335.390625,
+            "width": 310,
+            "height": 46
+          },
+          "bbox_image": {
+            "x": 40,
+            "y": 670.781,
+            "width": 620,
+            "height": 92
+          }
+        }
+      },
+      "text_fields": {
+        "connection": "已连接",
+        "task-name": "收藏 · 笔记",
+        "status-title": "已暂停",
+        "list-value": "36 / 60 篇",
+        "list-state": "尚未确认收齐",
+        "body-value": "24 / 36 篇",
+        "body-state": "占已发现笔记",
+        "action-note": "已保存正文保留，可随时继续。"
+      },
+      "visible_text": [
+        "收藏上下文",
+        "已连接",
+        "收藏读取",
+        "收藏 · 笔记",
+        "已暂停",
+        "收藏列表",
+        "36 / 60 篇",
+        "尚未确认收齐",
+        "正文保存",
+        "24 / 36 篇",
+        "占已发现笔记",
+        "已保存正文保留，可随时继续。",
+        "继续读取",
+        "常用操作",
+        "打开收藏页",
+        "补全正文",
+        "当前笔记图片",
+        "收藏夹图片",
+        "读取详情",
+        "设置",
+        "帮助"
+      ],
+      "synthetic_state": {
+        "page": {
+          "name": "收藏 · 笔记",
+          "scope": "saved",
+          "expected_count": 60,
+          "page_key": "https://www.xiaohongshu.com/user/profile/fixture?tab=fav",
+          "identity_marker": "fixture",
+          "view_marker": "fav-note"
+        },
+        "page_error": "请在小红书打开收藏 → 笔记。",
+        "page_session": {
+          "job_id": "guide-fixture",
+          "name": "收藏 · 笔记",
+          "finalized": false,
+          "scan_state": "paused"
+        },
+        "session": {
+          "job_id": "guide-fixture",
+          "name": "收藏 · 笔记",
+          "finalized": false,
+          "scan_state": "paused"
+        },
+        "server_status": {
+          "job": {
+            "state": "paused",
+            "discovered": 36,
+            "body_available": 24,
+            "expected_count": 60,
+            "items": {
+              "ready": 24,
+              "queued": 11,
+              "running": 1
+            },
+            "body_complete": false,
+            "list_complete": false,
+            "failure_summary": [],
+            "content_mode": "anonymous"
+          }
+        },
+        "connection_error": null
+      }
+    },
+    "completed": {
+      "image": "completed.png",
+      "controls": {
+        "#start": {
+          "visible": true,
+          "enabled": true,
+          "label": "更新收藏",
+          "bbox_css": {
+            "x": 20,
+            "y": 335.390625,
+            "width": 310,
+            "height": 46
+          },
+          "bbox_image": {
+            "x": 40,
+            "y": 670.781,
+            "width": 620,
+            "height": 92
+          }
+        },
+        "#pause": {
+          "visible": false,
+          "enabled": false,
+          "label": "暂停读取",
+          "bbox_css": null,
+          "bbox_image": null
+        },
+        "#resume": {
+          "visible": false,
+          "enabled": false,
+          "label": "重试正文",
+          "bbox_css": null,
+          "bbox_image": null
+        }
+      },
+      "text_fields": {
+        "connection": "已连接",
+        "task-name": "收藏 · 笔记",
+        "status-title": "正文已保存",
+        "list-value": "60 / 60 篇",
+        "list-state": "列表已收齐",
+        "body-value": "60 / 60 篇",
+        "body-state": "已发现正文已保存",
+        "action-note": "正文可供 Agent 搜索和引用。"
+      },
+      "visible_text": [
+        "收藏上下文",
+        "已连接",
+        "收藏读取",
+        "收藏 · 笔记",
+        "正文已保存",
+        "收藏列表",
+        "60 / 60 篇",
+        "列表已收齐",
+        "正文保存",
+        "60 / 60 篇",
+        "已发现正文已保存",
+        "正文可供 Agent 搜索和引用。",
+        "更新收藏",
+        "常用操作",
+        "打开收藏页",
+        "补全正文",
+        "当前笔记图片",
+        "收藏夹图片",
+        "读取详情",
+        "设置",
+        "帮助"
+      ],
+      "synthetic_state": {
+        "page": {
+          "name": "收藏 · 笔记",
+          "scope": "saved",
+          "expected_count": 60,
+          "page_key": "https://www.xiaohongshu.com/user/profile/fixture?tab=fav",
+          "identity_marker": "fixture",
+          "view_marker": "fav-note"
+        },
+        "page_error": "请在小红书打开收藏 → 笔记。",
+        "page_session": {
+          "job_id": "guide-fixture",
+          "name": "收藏 · 笔记",
+          "finalized": true,
+          "scan_state": "finished"
+        },
+        "session": {
+          "job_id": "guide-fixture",
+          "name": "收藏 · 笔记",
+          "finalized": true,
+          "scan_state": "finished"
+        },
+        "server_status": {
+          "job": {
+            "state": "active",
+            "discovered": 60,
+            "body_available": 60,
+            "expected_count": 60,
+            "items": {
+              "ready": 60
+            },
+            "body_complete": true,
+            "list_complete": true,
+            "failure_summary": [],
+            "content_mode": "anonymous",
+            "read_complete": true
+          }
+        },
+        "connection_error": null
+      }
+    }
+  },
+  "runtime_messages": [
+    "state"
+  ],
+  "blocked_remote_requests": [],
+  "page_errors": []
+}

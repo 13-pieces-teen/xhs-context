@@ -12,7 +12,8 @@ files = [root / name for name in ["README.md", "AGENTS.md", "CHANGELOG.md", "安
                                   "小红书收藏上下文项目计划书.md"]]
 for name in ["src", "browser-extension", "assets", "skills", "scripts", "examples", "tests", "docs", "research", ".github"]:
     files.extend(path for path in (root / name).rglob("*")
-                 if path.is_file() and "__pycache__" not in path.parts and path.suffix not in {".pyc", ".log"})
+                 if path.is_file() and not {"__pycache__", ".hyperframes", "node_modules"}.intersection(path.parts)
+                 and path.suffix not in {".pyc", ".log"})
 with ZipFile(destination, "w", ZIP_DEFLATED) as archive:
     for path in sorted(files):
         archive.write(path, path.relative_to(root))

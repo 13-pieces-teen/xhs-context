@@ -1,0 +1,42 @@
+[
+  {
+    "name": "01-install",
+    "start": 0,
+    "duration": 24,
+    "hero_times": [
+      4,
+      12,
+      20
+    ]
+  },
+  {
+    "name": "02-extension",
+    "start": 24,
+    "duration": 24,
+    "hero_times": [
+      28,
+      36,
+      44
+    ]
+  },
+  {
+    "name": "03-save",
+    "start": 48,
+    "duration": 24,
+    "hero_times": [
+      52,
+      60,
+      68
+    ]
+  },
+  {
+    "name": "04-ask",
+    "start": 72,
+    "duration": 24,
+    "hero_times": [
+      76,
+      84,
+      92
+    ]
+  }
+]
