@@ -2,7 +2,7 @@
 
 ## 2026-11-24：已采用的 iOS 风格界面
 
-用户已确认 [iOS 风格交互设计稿](../prototypes/ios-glass/DESIGN.md)，生产弹窗已接入该方向。本节描述当前实现；后续章节保留此前方案与验证记录，不再代表当前视觉规格。
+本节记录扩展弹窗当前采用的 iOS 风格界面。后续章节记录此前的设计与验证。
 
 - 弹窗固定 **360 × 600px**，顶栏 68px，主内容左右内距 20px。`html` 与 `body` 的宽度和最小宽度均显式设为 360px，不使用 `100vw` 限制；`body` 显式继承字体，避免 Chrome 扩展页的默认字体覆盖。内容纵向滚动，并为浮动底栏预留底部空间。
 - 内容使用实底，操作使用玻璃材质。进度卡与读取内容保持清晰背景，刷新按钮、底部工具栏和临时面板采用半透明、模糊及细边缘。内容卡圆角 22px，主按钮圆角 23px，工具栏圆角 26px；玻璃不覆盖正文可读性。
@@ -15,7 +15,7 @@
 - 本地组件沿用固定版本 **daisyUI 5.8.2**，图标使用 **Lucide 0.468.0** 原始 SVG；组件、图标、字体及许可全部随扩展打包。`vendor/daisyui/` 与 `vendor/lucide/` 保存来源和校验，Lucide 图标通过本地 `icons.js` 映射插入，不在运行时请求 CDN，也不引用设计稿文件。
 - 图片任务保留独立进度、暂停/继续、已保存张数及齐全笔记数；不能推断为当前正文任务的图片覆盖率。失效列表、原因和分页保留，现有 Native Messaging、读取、访问限制与补图流程不被设计稿的合成数据取代。
 
-验证入口保持为 `scripts/panel_smoke.py`、`scripts/popup_window_smoke.py` 和隔离集成检查 `scripts/browser_smoke.py`。前者覆盖合成状态的布局、sheet、键盘、偏好和进度语义；真实弹窗检查使用 `chrome.action.openPopup()`，不为弹窗预设宽度。测试截图仅是合成状态证据，不代表真实收藏采集结果。`prototypes/ios-glass/` 留作已采用方向的交互参考，仍不连接真实资料库。
+验证入口为 `scripts/panel_smoke.py`、`scripts/popup_window_smoke.py` 和隔离集成检查 `scripts/browser_smoke.py`。面板检查覆盖合成状态的布局、sheet、键盘、偏好和进度语义。真实弹窗检查使用 `chrome.action.openPopup()` 测量自动尺寸。测试截图使用合成资料。
 
 ## 历史记录：2026-11-24 紧凑面板与并排圆环
 
@@ -34,8 +34,6 @@
 - 验证入口：`scripts/panel_smoke.py` 检查合成状态下的圆环、键盘和固定宽度布局；`scripts/popup_window_smoke.py` 通过 `chrome.action.openPopup()` 检查真实工具栏弹窗首次打开、重开与状态切换的自动尺寸，不为弹窗预设视口。`scripts/browser_smoke.py` 保留隔离 Native Messaging 集成验证。界面截图使用合成数据，不代表真实收藏读取结果。
 
 以下为 2026-11-20 早期设计记录，依据当时的 `browser-extension` 源码与 README；原型数字均为示例，不代表真实收藏覆盖率。
-
-Figma：https://www.figma.com/design/ENwEMHF8nycbRRye1i9jLS
 
 ## 1. 插件负责什么
 

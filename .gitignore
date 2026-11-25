@@ -17,3 +17,21 @@ archive/
 *.sqlite-wal
 *.sqlite-shm
 
+# 本地项目资料与演示制作文件
+/小红书收藏上下文项目计划书.md
+/research/
+/prototypes/ios-glass/
+/docs/figma-panel-build.js
+/docs/figma-panel-nodes.json
+/examples/evaluation-questions.json
+/assets/readme/generation.json
+/assets/readme/panel-overview.png
+/assets/guides/DESIGN.md
+/assets/guides/README.md
+/assets/guides/build_composition.py
+/assets/guides/capture_panels.py
+/assets/guides/export_guides.py
+/assets/guides/hyperframes/
+/assets/guides/panels/
+/assets/guides/segments.json
+
